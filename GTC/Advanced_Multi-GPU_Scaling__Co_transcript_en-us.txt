@@ -1,0 +1,1916 @@
+Transcript Powered by AI
+
+Advanced Multi-GPU Scaling: Communication Libraries
+
+
+00:08
+Yeah, thanks for the introduction and welcome, I repeat a motivation
+
+00:14
+from one of the talks earlier this day, you all probably
+
+00:17
+know this, why use multiple GPUs, yeah, sometimes you just
+
+00:20
+need to compute faster, because you need to match a quality of service.
+
+00:25
+Requirement like in weather prediction, where you should
+
+00:28
+be faster than real time, otherwise you're not predicting the future.
+
+00:32
+Or you just need to compute larger, larger LLN models,
+
+00:36
+more higher resolution CFD models.
+
+00:39
+So, as Mads has shown this morning, the data is going
+
+00:44
+to explode, so you really need multi-GPUs to really put
+
+00:49
+that data into reasonable action.
+
+00:55
+So, to repeat, this is a part of a three-part series and presenting
+
+01:01
+the multi-GPU programming landscape on this semi-scientifically
+
+01:07
+axis with, on the x-axis, the generality, so how domain-specific
+
+01:12
+is it, how general can I express the algorithms, and on the
+
+01:15
+y-axis, the productivity.
+
+01:17
+You can probably argue a lot where to exactly put these dots.
+
+01:23
+I think we found a way that someone will always disagree
+
+01:26
+and some will always agree.
+
+01:28
+So at 8 a.m.
+
+01:30
+this morning, Mads gave an introduction to the high-level
+
+01:35
+libraries that really abstract most of the work away from
+
+01:39
+you so that you have really the most productive experience.
+
+01:45
+But if your operation is
+
+01:49
+Manolis talked about the task-based runtimes that are used to
+
+01:52
+build the higher-level
+
+02:06
+Runtimes Mads has introduced before and now I'm going down
+
+02:13
+in the productivity and up in the generality talking about
+
+02:18
+the advanced multi-GPU scaling with communication libraries.
+
+02:22
+So what's used by all of this to actually carry out the
+
+02:27
+data movement needed when you program multiple GPUs.
+
+02:32
+So, yeah, I said, what is, what will this talk be about?
+
+02:36
+If you have multiple GPUs working on one problem cooperatively
+
+02:41
+at one point, you need to exchange data so that they stay
+
+02:47
+in sync and really solve the same problem and do this productively,
+
+02:51
+so that is what this is about.
+
+02:55
+How can NICL, MPI, and BISMEM help you to efficiently
+
+03:00
+orchestrate that And, um,
+
+03:05
+All the models here are CUDA-aware, meaning, as you see from the
+
+03:09
+arrow, they can directly work with GPU memory, so directly
+
+03:13
+move data from GPU memory to GPU memory across the most
+
+03:18
+efficient data path.
+
+03:21
+High level with MPI.
+
+03:24
+The two-sided communication part of the API looks like the rank that
+
+03:31
+has the data, which in this case is zero, calls mpiSend on the array
+
+03:38
+in GPU memory, and the GPU that accepts the data calls receive.
+
+03:44
+With ncl, this looks very similar.
+
+03:46
+It's also a send-receive, two-sided communication pattern.
+
+03:50
+The important difference here is that
+
+03:53
+You see the stream argument last.
+
+03:55
+So it is a blocking operation with respect to the GPU stream,
+
+04:01
+with respect to the GPU.
+
+04:02
+So in the stream, it's executed in, but it's non-blocking
+
+04:04
+with respect to the host.
+
+04:05
+So right after these calls, I dispatch the CPU3 to do other work,
+
+04:09
+schedule more kernels and so on.
+
+04:12
+And last but not least, nvshmem, which most noted as nccl.
+
+04:17
+It's also, this is the host API.
+
+04:19
+I also go to the device API later.
+
+04:22
+This also has a stream, so it's non-blocking with
+
+04:25
+respect to the CPU.
+
+04:27
+And also you see that there's only one part.
+
+04:31
+It's a one-sided communication model.
+
+04:33
+So as I go into more details later, this is enabled with
+
+04:37
+a symmetric heap.
+
+04:40
+Okay, what do all of these and the programming models have in common?
+
+04:44
+Because they are multi-node, multi-GPU programming models, you
+
+04:47
+need a bit of help launching them.
+
+04:49
+So it's not like you just launch your executable and
+
+04:52
+the executable can have everything in there to make sure that
+
+04:56
+you launch one process per GPU, which is the typical middle thing.
+
+05:01
+So you take...
+
+05:04
+Usually a launcher, which in case of a Sloan cluster is typically
+
+05:08
+srun, but also the programming models typically come with a
+
+05:11
+launcher like mpirun or nvshmemrun.
+
+05:16
+These have a lot of options to map your processes correctly
+
+05:20
+on your resources.
+
+05:22
+Here, from simplicity, I'm just showing the most important one,
+
+05:25
+how many instances do you have?
+
+05:26
+So if you use that launcher, provide your app with
+
+05:29
+your arguments, it takes care of distributing
+
+05:33
+Launching one instance of your application for every GPU and after
+
+05:38
+the library is initialized they get back rank in case of MPI and nickel
+
+05:43
+or processing element PE ID from zero to number of processes minus
+
+05:49
+one so that they can safe identify themselves, know how many others
+
+05:52
+are there and then can use that to orchestrate their communication.
+
+05:58
+Okay, let's get started with the first programming model,
+
+06:02
+MPI, which stands for Message Passing Interface.
+
+06:05
+It's a long-established standard to exchange data
+
+06:07
+between processes via messages, and for that it defines an API
+
+06:11
+for point-to-point communication.
+
+06:12
+You have already seen the MPI send-receive, but also
+
+06:15
+a rich set of collectives, reduce, all-reduce, and so on.
+
+06:20
+There are many implementations with bindings for probably
+
+06:24
+every language you care about.
+
+06:26
+I just list a few here, open source and commercial.
+
+06:34
+Step back, a bit of foundational technology, which is used
+
+06:38
+to either enable all of the libraries or require even
+
+06:41
+for their functionality or speed their functionality up.
+
+06:44
+The most important fundamental building block for CUDA with
+
+06:49
+MPI is unified virtual addressing, which we introduced way back
+
+06:54
+with compute capability 2.0.
+
+06:57
+And what this does is it, when you allocate any memory
+
+07:02
+in a CUDA program,
+
+07:04
+The pointer is part of this unique virtual addressing, not
+
+07:07
+to be confused with unified memory.
+
+07:10
+So, range, so that you can identify from the virtual address
+
+07:14
+of a pointer its physical location.
+
+07:16
+You can query the CUDA driver, where does this pointer live,
+
+07:19
+and that allows...
+
+07:22
+A library like MPI to become CUDA-aware, because I can
+
+07:25
+just pass in a pointer, the library can query is it a CPU pointer,
+
+07:28
+a GPU pointer, on which GPU, and then can take the right steps
+
+07:30
+to efficiently move your data.
+
+07:32
+So, let's see.
+
+07:34
+Enabling technology.
+
+07:36
+But there are two others I want to touch on.
+
+07:38
+One is part of the GPU Direct family.
+
+07:41
+One is for peer-to-peer transfers, which allows
+
+07:46
+data to be moved directly from one GPU to another GPU
+
+07:51
+in the same node via PCI Express.
+
+07:53
+Or, if available, NVLink, which you have probably heard
+
+07:57
+earlier, NVLink also is multi-node capable, which gives, of course,
+
+08:03
+much higher bandwidth because you can use the high bandwidth NVLink
+
+08:06
+connection between GPUs and avoid any bottlenecks of intermediate
+
+08:09
+staging in CPU memory and so on.
+
+08:14
+Then there is GP-Direct support for RDMA, which allows third-party PCI
+
+08:20
+Express devices to directly read and write to and from GPU memory.
+
+08:24
+So in case of an InfiniBand network adapter, it can directly
+
+08:28
+read data from CPU memory and send it over the network to
+
+08:32
+the destination, so that you avoid also any intermediate steps for
+
+08:39
+potentially harming performance.
+
+08:42
+So let's take a look at a very simple example with CUDA
+
+08:45
+or MPI, how this is put into action so that you can contrast that and
+
+08:49
+better reason about performance.
+
+08:51
+I'm looking at MPI rank zero doing an MPI send from a GPU
+
+08:55
+buffer, MPI rank one doing an MPI receive, matching that
+
+08:59
+send to a GPU buffer to show how CUDA plus MPI works in principle.
+
+09:04
+This is looking at two GPUs in two nodes.
+
+09:08
+So depending on your MPI implementation, your message
+
+09:10
+size, system setup,
+
+09:12
+You probably see something different, but I think this
+
+09:14
+is still a very useful mental model to reason about performance
+
+09:18
+and what can potentially happen within a communication library
+
+09:24
+like CUDA or MPI.
+
+09:26
+Okay, let's first start with the best case.
+
+09:29
+We have support for GPT-REC RDMA and a network supporting that.
+
+09:34
+We would just pass in our device buffers into the send-receive
+
+09:38
+calls, and the library will directly move data over the
+
+09:43
+PCIe Plus network and so on.
+
+09:45
+You can also see that when you run it with Nsight Systems
+
+09:50
+and profile it to check what's really happening.
+
+09:52
+And the most relevant part here is what you're not seeing.
+
+09:56
+You're not seeing any GPU activity, you're not seeing
+
+09:58
+any CUDA API calls, and that is because all the transfer
+
+10:01
+is mastered by the network adapter.
+
+10:04
+What you see, however, is, that's why I've enabled the GPU matrix,
+
+10:08
+Sampling.
+
+10:09
+You see activity on the PCI Express bus.
+
+10:12
+That is the network adapter reading data from GPU memory or writing
+
+10:16
+data from GPU, depending on if you're receiving or sending data.
+
+10:21
+So that's very efficient.
+
+10:24
+If you're, for whatever reason, GPDIRECT can't be used because
+
+10:30
+of the node topology, system setup issues or so, you can
+
+10:34
+still use device pointers and MPI will take care of staging,
+
+10:40
+doing the necessary staging, which then involves potentially
+
+10:44
+involving two buffers on the CPU.
+
+10:47
+But it will all nicely pipeline that, which you can also see
+
+10:51
+from the Nsight Systems timeline that you have this multiple
+
+10:54
+chunks of device-to-host transfers and actually the network transfers
+
+10:58
+run pipelined with that so that you still get reasonable
+
+11:03
+or good performance depending on the exact constraints.
+
+11:08
+So to contrast that, what would you need to do if you
+
+11:11
+don't have a CUDA MPI?
+
+11:12
+Then you first need to call a CUDA memcopy, device to
+
+11:15
+host, wait for that to finish, then you can call your CPU
+
+11:19
+MPI, wait for that to finish, and then you can copy the...
+
+11:26
+Need to call CUDA memcopy to copy host-to-device again.
+
+11:31
+Aside that this has far more steps, it also has a big downside
+
+11:35
+that it stalls the pipeline after the CUDA memcopy and after
+
+11:39
+MPI, which you can also see if you look at this in Nsight Systems.
+
+11:44
+You have one large copy and then need to wait for that and
+
+11:48
+there's no overlap at all between network and host-to-device copies.
+
+11:55
+Yeah, if we take the OZO benchmarks we just looked at, and I've
+
+11:59
+taken a system that's available for scientists for some comparisons,
+
+12:05
+JUWELS Booster in ULIC, and have run this benchmark with
+
+12:11
+a default sweep of sizes, and compared CUDA WMPI with
+
+12:15
+GPT-REC RDMA, the green line.
+
+12:16
+You see that this saturates the network bandwidth of the...
+
+12:22
+HDR 200, InfiniBand network with CUDA-OMPI you lose some
+
+12:27
+performance, but it's still good with staging you're really Harming
+
+12:33
+your performance, so you want to use a CUDA-OMPI and make sure
+
+12:36
+your system is configured correctly
+
+12:39
+If we go Intranode, where we can also use NVLink, the differences,
+
+12:43
+of course, amplify significantly because the performance delta
+
+12:48
+between PCI Express and NVLink is just much higher because PCI
+
+12:51
+Express matches network bandwidth but not the NVLink bandwidth.
+
+12:55
+And therefore, there it's even providing more benefit to GPDirect.
+
+13:02
+Okay, so does it also translate to real application performance?
+
+13:07
+And yeah, it does.
+
+13:10
+What I've taken here is a CUDA-aware application,
+
+13:14
+in your case it's ICANN, which is the ICO...
+
+13:17
+DGX H100, NVIDIA, 400Gb RDMA, QUBICC, UCX,
+
+13:19
+OpenMPI, JUWELS Booster.
+
+13:36
+For this benchmark we use the QUBIC workload at a 10km horizontal
+
+13:40
+resolution with 190 vertical edges, which is a typical setup.
+
+13:45
+What you see here from the screenshots is that compared
+
+13:48
+to a CPU MPI, the CUDA MPI for ICANN avoids unpipelined transfers.
+
+13:54
+So here you see the CPU MPI, you see the host-to-device copy, then
+
+13:58
+the long gap with no GPU activity
+
+14:02
+and then the host-to-device copy again after MPI is completed and
+
+14:09
+when we look at the CPU version, in this case the profile of
+
+14:15
+Running on a single node, so that we can see the peer-to-peer
+
+14:17
+transfers, you see that the host-to-device copies are
+
+14:20
+missing, and that you get peer-to-peer transfers.
+
+14:24
+And, as you can see also from the Highline view, you see
+
+14:27
+that the overall timeline is much denser with much less gaps,
+
+14:32
+so execution is more efficient.
+
+14:34
+If we run a scaling experiment comparing these two, we see a
+
+14:40
+1.4x speedup for the scale really relevant in production,
+
+14:44
+which is the about 8 to 12 nodes.
+
+14:50
+And we also have done an academic exercise to scale out, so at 32
+
+14:54
+nodes we even see a benefit of 1.6x on the EOS supercomputer with DGX
+
+14:58
+H100 GPUs and an NDR 400 network.
+
+15:10
+Okay, let's switch gears and go to NICL, the NVIDIA Collective
+
+15:13
+Communications Library.
+
+15:15
+It's a library for efficient communication with GPUs.
+
+15:17
+It started off with collectives, for example, AllReduce, as required
+
+15:22
+for data parallel deep learning.
+
+15:24
+Since version 2.8, it also supports send-receives between GPUs, which
+
+15:28
+allows to, besides the, effectively to express arbitrary communication
+
+15:35
+patterns, including all-to-all, all-to-all V, and so on.
+
+15:40
+Compared to MPI, this is a library running on GPUs with
+
+15:44
+any GPU-accessible data, so the communication calls are
+
+15:47
+translated to GPU kernels running on streams, as I have
+
+15:50
+already said, which makes them blocking to the GPU stream you have
+
+15:55
+submitted them to, but non-blocking with respect to the host, which...
+
+15:58
+This enables to avoid some CPU-GPU communication and, especially for
+
+16:05
+collectives, allows to leverage the compute throughput to really run
+
+16:08
+collectives at the maximum speed.
+
+16:11
+So I would, if you're more interested in NICL, I would
+
+16:14
+strongly recommend you to watch the recording of my
+
+16:20
+colleague's talk, Sylvain Jogot.
+
+16:21
+He has presented this on Monday, latest news on NICL.
+
+16:26
+And one slide he had here is showing the collective
+
+16:30
+communication bandwidth achieved with the latest version of
+
+16:33
+NICL across generations.
+
+16:37
+And as you see, they're really high bandwidth achievable,
+
+16:41
+especially if NVLink and SHARP can be used, both inter-node,
+
+16:46
+multi-GPU and multi-node.
+
+16:49
+So aside from the high collective performance
+
+16:55
+and the benefit of avoiding
+
+16:59
+Synchronization. I wanted to demonstrate
+
+17:01
+that with a source code.
+
+17:03
+I will have a larger link on the last slide, just in case you look
+
+17:06
+at the slides that's on the bottom.
+
+17:08
+It's a bit simplified version from an example
+
+17:12
+code available on GitHub.
+
+17:13
+On the left you have the MPI version where you see that
+
+17:17
+you need to synchronize the compute kernel because before
+
+17:21
+you can start communicating
+
+17:23
+Start issuing the communication for the data that has that
+
+17:27
+compute kernel has produced.
+
+17:29
+Compared to that, NICL looks very similar regarding the send-receive.
+
+17:33
+But you can avoid the CUDA stream synchronized because the
+
+17:35
+communication is submitted in the same stream as the compute kernel.
+
+17:40
+So it doesn't start before the compute kernel has finished,
+
+17:42
+but you can already enqueue the work and the CPU can go
+
+17:46
+out to do other work which
+
+17:49
+Allows to more eagerly schedule stuff to the GPU and makes
+
+17:53
+the timeline generally denser.
+
+18:00
+Here, I've also taken a Nickel application use case.
+
+18:04
+Of course, there are, I mean, if you go around the conferences,
+
+18:07
+almost every deep learning application uses Nickel.
+
+18:10
+So, I wanted to get something potentially new to this
+
+18:13
+audience, which is VASP, the Vienna App Initio Simulation
+
+18:18
+Package, which is a,
+
+18:21
+Very versatile package to do up-in-issue calculations
+
+18:28
+based on first-principle molecular dynamics, which is, for example,
+
+18:32
+used in material research.
+
+18:35
+And that has started off with cuda of MPI, but later on added
+
+18:40
+a nickel communication option, and that leverages multiple things.
+
+18:45
+But one thing is...
+
+18:47
+Higher performance because of GPU-accelerated collectives,
+
+18:50
+because of the CUDA stream-aware interface, it minimizes CPU-GPU
+
+18:54
+synchronization, and as a follow-on, the asynchronous GPU
+
+19:00
+execution made it easier to express communication-computation overlap.
+
+19:04
+Therefore, in the NICL version, communication-computation
+
+19:07
+overlap is implemented, but not in the MPI version.
+
+19:11
+So the comparison I'm going to share is...
+
+19:14
+Not 100% fair.
+
+19:16
+MPI could be better if work would be implemented there, but
+
+19:20
+still it is a side effect of making it easier, at least in this code.
+
+19:25
+Here I'm comparing
+
+19:28
+Also, you see that on the left side, it's a CUDA WMPI,
+
+19:31
+you see a lot of white space, and everything is serial.
+
+19:36
+And on the right side, you see the nickel version, where
+
+19:41
+you see kernels in two rows, so the communication nickel kernels are
+
+19:45
+overlapping with compute kernels.
+
+19:47
+The GPU is busy all the time, what I'm highlighting here is actually
+
+19:51
+a reduced kernel, so that's the reason why there's white space
+
+19:54
+on the left side, because it's a...
+
+19:56
+Reduction is done on the CPU and not with
+
+19:58
+an efficient nickel kernel.
+
+20:02
+If we take the hafnium simulation with 216 atoms and scale
+
+20:09
+that also on EOS from 4 to 32 nodes, at the limit
+
+20:14
+we see 2.6x speed up due to using nickel instead of cuda or MPI.
+
+20:23
+At the bottom there's a link to a blog post which provides
+
+20:25
+more information on the exec use case and how this is done.
+
+20:32
+Okay, then let's switch to NVSHMEM, which is an implementation
+
+20:38
+of the OpenSHMEM standard, and which builds on the partition
+
+20:43
+global data space, meaning the...
+
+20:48
+The core principle is that all the arrays we work with
+
+20:51
+for communication are allocated from a symmetric heap.
+
+20:54
+So they need to, if something needs to be communicated,
+
+20:57
+it needs to be allocated with nvshmem malloc to be accessible.
+
+21:01
+And that nvshmem malloc makes sure that...
+
+21:06
+The memory is properly aligned, registered with the network
+
+21:09
+adapter for inter-process communication over NVLink and so
+
+21:14
+on and so forth so that it enables the one-sided communication.
+
+21:20
+This is a collective call, so you need to really call
+
+21:23
+it with the same sizes on every process and therefore
+
+21:27
+it's also called a symmetric heap, so if you do an allocation, you get
+
+21:31
+the same sized chunk on each GPU, which has the benefit that it...
+
+21:38
+It avoids communication to communicate offsets and so
+
+21:42
+on, because you just know, okay, my peer, I will need to send
+
+21:47
+this data to has this and offset x, and you don't need to reason.
+
+21:52
+You can do this computation locally.
+
+21:53
+You don't need to ask your peer, like in a two-sided model,
+
+21:56
+where should I put this data?
+
+21:57
+You can just go ahead and
+
+22:01
+write the data directly where
+
+22:03
+The peer will need it next.
+
+22:07
+It has a CPU API in the blocking variant and the stream audit
+
+22:12
+variant, which I've shown on the first slide, but also,
+
+22:15
+very importantly, cuna kernel interfaces to read data with
+
+22:20
+get operations, write data with put operations, atomics to synchronize,
+
+22:26
+and some memory consistency APIs.
+
+22:30
+Big benefit on the point of the memory consistency, these
+
+22:35
+give you exactly the control where you need to wait for things
+
+22:39
+to complete, which also limits the amount of synchronization
+
+22:42
+between processes needed.
+
+22:46
+Oh, I missed to mention that actually for NICL.
+
+22:49
+All these programming models are fully interoperable, so you
+
+22:51
+can use NICL in an MPI program, you can use OpenSHMEM in an MPI program
+
+22:57
+in case you have a legacy code base and want to accelerate that.
+
+23:02
+Okay, so what's the...
+
+23:06
+A thing with device-initiated communication.
+
+23:09
+If we have a SHMEM program with CPU-initiated communication,
+
+23:12
+typically, yeah, we do the compute on the GPU, and the communication
+
+23:15
+is issued from the CPU.
+
+23:17
+So you need to synchronize at the boundaries, as we have seen.
+
+23:20
+So you start your kernel, wait for that, then you do
+
+23:23
+your SHMEM put, wait for that to finish, start the next iteration.
+
+23:26
+So very commonly used, similar to MPI.
+
+23:30
+Problem is that the offload latency is to launch the
+
+23:32
+kernel, synchronize data on the critical path, and
+
+23:35
+you don't get overlap between communication and computation.
+
+23:38
+With that model, you can express communication and computation.
+
+23:42
+I have examples of that in the source code.
+
+23:44
+I will provide you the link on the last slide.
+
+23:48
+But it makes the code more complicated, and also you
+
+23:52
+have a lot of API calls added.
+
+23:58
+Compared to that, GPU-initiated communication does both,
+
+24:00
+compute on the GPU and the communication on the GPU.
+
+24:03
+So you can start sending out data as soon as it's computed.
+
+24:08
+That benefit is clearly you'll need to launch less kernels
+
+24:11
+and less operations, so less offload latencies.
+
+24:14
+You get on the GPUs, you get natural communication computation
+
+24:18
+overlap just by threading, the same technique you use
+
+24:20
+to hide your global memory access latencies, just have multiple
+
+24:25
+threads run on the same SM.
+
+24:28
+And for some algorithms, it can be easier to express them
+
+24:31
+with in-line communication.
+
+24:34
+So, how does that look like in code?
+
+24:36
+Threat-level communication, so that every thread just
+
+24:40
+does a single element put here, which is very fine-grained,
+
+24:45
+so you get the maximum overlap between communication and
+
+24:48
+computation with threading.
+
+24:50
+And it's a very efficient mapping on NVLIMP fabrics,
+
+24:53
+like we have them on DGX systems.
+
+24:56
+And yeah, you just, instead of doing a load store, you
+
+25:00
+just call nvshmem float p on the data you want to send
+
+25:05
+this to, the source data, and then the destination processing
+
+25:09
+element where you want to put that.
+
+25:14
+There are also APIs to form larger groups, which are necessary
+
+25:18
+for networks like InfiniBand, which don't have that high
+
+25:22
+message rates like you can achieve over a memory fabric like NB-Link.
+
+25:27
+You still get overlap between warp and blocks, but you form
+
+25:31
+larger messages so that the network-like operations can
+
+25:34
+work more efficiently.
+
+25:37
+So this is one benefit, but really what can put your code to the next
+
+25:45
+level is that kernel initiation communication also allows you
+
+25:51
+to avoid certain kernel boundaries.
+
+25:54
+So you can fuse kernels to keep more state into registered or
+
+25:58
+shared memory and avoid whole memory round trips to just store
+
+26:02
+them to global memory to have a separate communication OpenSHMEM,
+
+26:05
+NVIDIA, QUDAStreamSynchronize, Wilson Dslash.
+
+26:07
+And this sometimes requires in-kernel synchronization,
+
+26:11
+and that is also possible by device-initiated communication,
+
+26:15
+if you launch your kernel in the right way.
+
+26:17
+So, you can really move the whole iteration loop into your kernel.
+
+26:23
+In this case, it's a simple one, relatively.
+
+26:25
+In your case, it's probably not so much the whole iteration
+
+26:29
+loop, but rather two kernels that you no longer need to
+
+26:31
+launch separately, because they have communication in between,
+
+26:34
+but things you can do together.
+
+26:39
+Okay, here I also have an application use case, also
+
+26:42
+from the HPC, CUDA.
+
+26:45
+We are looking at strong-scaling the Wilson Dslash operator.
+
+26:48
+CUDA stands for QCD on CUDA.
+
+26:51
+It's an open-source library to provide
+
+26:55
+building blocks for the necessary calculations in Lattice QCD.
+
+26:59
+Simulations on graphics processing units.
+
+27:03
+It leverages device-initiated communication by Envish Mem
+
+27:06
+to overcome latency barriers when strong scaling.
+
+27:10
+Most of the details are.
+
+27:14
+I can be quite stable, so you can take this GTC 2020
+
+27:17
+talk from my colleague for more details of what is falling.
+
+27:22
+What this does is, as I said, mostly overcoming
+
+27:28
+the latency barriers by the need of launching many operations.
+
+27:33
+So in QUDA, when you're...
+
+27:36
+When communication happens, you first need to pack that
+
+27:38
+data, communicate it, compute because you want to overlap
+
+27:41
+communication and computation.
+
+27:43
+You have a separate kernel for the interior and the exterior.
+
+27:46
+So if you look at the profile of a single node execution of
+
+27:56
+With MPI, you see that you have the packing kernel, the interior
+
+28:00
+kernel, and the data copies and the thing is that you see there
+
+28:03
+are gaps between them, which are caused because it just takes too
+
+28:07
+long to launch these small kernels,
+
+28:10
+and that the communication takes longer than the interior kernel,
+
+28:13
+and that is also not because
+
+28:16
+The communication is not fast enough itself, it just
+
+28:18
+takes too long to launch the individual copies.
+
+28:21
+So, because if you would just put all the peer-to-peer copies
+
+28:25
+together, they would comfortably run faster than the interior.
+
+28:30
+Compared to that, with Envish Mem, we can build a fully fused kernel,
+
+28:34
+so we don't just launch one kernel.
+
+28:36
+Launching of the kernels can also run ahead for the next
+
+28:39
+iteration, so we already, while the current kernel is
+
+28:42
+running, we have already launched and provided everything to the GPU.
+
+28:46
+For the next one, which avoids all the white space on the GPU and also
+
+28:52
+translates to a huge performance speedup if you scale out.
+
+28:57
+This one is a relatively busy slide.
+
+28:59
+We look at, again, EOS with DGX H100, 400 gigabit NDR.
+
+29:05
+DGX H100, NVIDIA, QUDA, GTC, Wilson Dslash, NVIDIA, QUDA, GTC,
+
+29:07
+Wilson Dslash, NVIDIA, QUDA, GTC,
+
+29:26
+The thing we see that the further we scale out, the larger
+
+29:30
+the performance difference is.
+
+29:32
+So with NB-SMEM, although it really starts to get questionable if you
+
+29:37
+want to throw more resources, but you can still get more performance
+
+29:41
+if you go from 256 to 512.
+
+29:44
+GPUs where you see an up to 1.7x speedup over MPI.
+
+29:48
+You also see that MPI doesn't, so MPI doesn't really scale.
+
+29:53
+The bump from 128 to 256 is strongly related to being
+
+29:58
+the need to launch multiple kernels because at that point
+
+30:01
+a partition change happens, which requires the MPI version
+
+30:04
+to launch more boundary kernels.
+
+30:10
+Okay, with that, I'm ready to conclude.
+
+30:14
+There's a link for the, where you can find the other CUDA developer
+
+30:18
+sessions on this conference.
+
+30:20
+Some will still appear, but most of them already happened,
+
+30:22
+so you can watch the recording.
+
+30:25
+I want to put in a shameless plug for
+
+30:29
+CWE later today at 3 p.m.
+
+30:31
+where you can find me and other colleagues from the
+
+30:34
+GPU comms team to answer your questions on MPI, NICL, Nvsh mem,
+
+30:39
+GPU direct, and so on and so forth.
+
+30:42
+I also want to advertise a talk with a very similar title
+
+30:47
+I have presented last year, Multi-GPU programming for
+
+30:50
+models for HPC and AI.
+
+30:52
+AI, where I also cover MPI, NICL, and Envish MEM, but there I'm using
+
+30:56
+the linked multi-GPU programming model source code as a hello
+
+31:00
+world to really go step-by-step on how does it look in source
+
+31:04
+code with a single example, how do I express communication computation
+
+31:08
+models in different variants, and
+
+31:13
+compare the performance of those.
+
+31:14
+So yeah, you can find the example on GitHub and on NVIDIA On Demand,
+
+31:19
+the recording from last year.
+
+31:21
+So summarizing the different models for GP-Direct peer-to-peer
+
+31:25
+and RDMA, for MPI and NICL, they improve performance if
+
+31:29
+they are leveraged, but they both will also work if they are
+
+31:31
+not available because the libraries internally can do staging.
+
+31:35
+For NB-SMEM, they are required because the one-sided model
+
+31:38
+requires that mappings are set up so that I can really
+
+31:43
+do something without involving the source or destination of the data.
+
+31:49
+NPI, Nickel and EnvishMEM are CUDA stream-aware and can also work with
+
+31:55
+CUDA graphs, so you can capture the communication in the graph
+
+31:58
+to further reduce API overheads.
+
+32:01
+Kernel-initiated communication is, as of today, supported
+
+32:04
+with EnvishMEM, but coming soon to Nickel as...
+
+32:09
+This was shared in the NICL talk on Monday.
+
+32:12
+And yeah, the supported communication models are COLLECTUS,
+
+32:17
+COL stands for COLLECTUS, 2S for two-sided, 1S for one-sided,
+
+32:22
+and you see that MPI and NICL soon will support all three, and NVSHMEM
+
+32:28
+support COLLECTUS and one-sided.
+
+32:31
+With that, I'm happy to take your questions.
+
+32:43
+Way in the back.
+
+32:52
+Thank you for the talk.
+
+32:53
+Nice talk. So, one clarification.
+
+32:56
+So, NVIDIA also has this, another package, DOKA, GPU, NetIO.
+
+33:02
+Where would that fit in this table?
+
+33:06
+It's not... So, the NetIO is, I would describe as a
+
+33:13
+lower-level library that's used by frameworks like Arial
+
+33:17
+and so on, but not so much by...
+
+33:19
+HPC applications running on large clusters.
+
+33:24
+So it would not really fit in this table.
+
+33:30
+It targets a different use case.
+
+33:33
+So edge computing, for example, when you need to directly
+
+33:36
+stream data to instruments, that becomes relevant.
+
+33:40
+So the GPU-initiated communication that you showed, right?
+
+33:45
+Yeah.
+
+33:46
+Isn't it similar to that?
+
+33:47
+Yes, yes, yes, yes, a lot of overlap in the technology
+
+33:49
+stack, but it's just meant for, designed for a different use case,
+
+33:54
+edge computing use cases, and the most prominent example being Arial.
+
+33:58
+Okay, thank you.
+
+34:01
+Any other questions?
+
+34:05
+Just Jensen's keynotes on the Dynamo for the operating system.
+
+34:10
+Do you think that those solutions that you put in here will be part
+
+34:13
+of that Dynamo solution that will make it automatic in the future?
+
+34:20
+It's on the inference side.
+
+34:23
+I mean, any...
+
+34:25
+Any multi-GPU application needs to communicate data to
+
+34:31
+use them together, and sure, these are building blocks that we build
+
+34:37
+upon to build anything high-level.
+
+34:43
+Just wanted to understand how you can use MPI and NCCL
+
+34:47
+together, for example, I mean, I saw one use case in which
+
+34:51
+you do like for LLM inference, if you have like a pre-fill and
+
+34:55
+a decoding, like you have groups of GPUs doing something and then
+
+35:01
+The other group doing the decoding part.
+
+35:03
+So I saw some code where you have MPI with nccl.
+
+35:07
+Like, I don't know, when should we use just nccl purely?
+
+35:11
+Or like, how do you make that kind of call?
+
+35:13
+Like, how do you start with the code?
+
+35:15
+Like, you should just use MPI first and then introduce nccl inside.
+
+35:19
+Like, what is the best way to...
+
+35:21
+See, like, basically start with the basic code which
+
+35:25
+runs and then keep on optimizing.
+
+35:27
+I just wanted to know some... Yeah, so the primary... I
+
+35:33
+would say the primary reason to combine MPI and ncl is...
+
+35:37
+that you have already an MPI code and then you can use
+
+35:42
+nccl in the performance critical parts so it doesn't so the
+
+35:45
+interoperability is important that if you already have MPI you
+
+35:48
+don't need to rewrite your whole code in nccl you just apply where
+
+35:52
+it provides the most value and and the non-performance critical parts
+
+35:55
+you don't need to touch that so therefore it's it's more question
+
+36:01
+is if nccl provides what you need
+
+36:04
+Use that. There, I think, I would say... So if I write from scratch,
+
+36:08
+I should just write in ncl today?
+
+36:11
+Okay, okay. MPI might be helpful for you to do the bootstrapping
+
+36:15
+necessary to get this up.
+
+36:16
+That might be a good choice, but there might also be other choices,
+
+36:20
+but there's no reason to...
+
+36:25
+If the data is on the GPU all the time, I mean, obviously,
+
+36:28
+if you have mixed CPU-GPU communication, then it might
+
+36:31
+make sense to look at MPI as well, but generally, yeah, if ncl
+
+36:38
+provides your running on GPU data, just start with ncl, and yeah.
+
+36:46
+From the communications library standpoint, are there concerns
+
+36:50
+using them on a network which uses IPv6 addressing versus v4?
+
+36:58
+Is the intelligence or differentiation between v4, v6 part
+
+37:01
+of the communication libraries?
+
+37:04
+Is that handled by the transport layer underneath within the UCS?
+
+37:08
+It's sufficiently abstracted away so that that's not visible.
+
+37:11
+I mean, what's for performance very relevant if you're
+
+37:14
+running on Ethernet, if that Ethernet provides,
+
+37:19
+supports rocky capabilities so that you get RDMA over Ethernet.
+
+37:25
+I'm not that low-level person.
+
+37:27
+I think that's orthogonal to IPv6 and IPv4.
+
+37:32
+So that's... So the libraries are totally abstracted from
+
+37:36
+the... Yes, that's not... I've never heard that this
+
+37:40
+happens, that this plays a role.
+
+37:43
+Have you had cases from...
+
+37:46
+From your other colleagues or other people who have used these
+
+37:50
+libraries over a network, Ethernet network, supporting Rocky, but
+
+37:55
+the addressing scheme being IPv6.
+
+37:56
+I don't know.
+
+37:58
+Please come to the, connect with the experts.
+
+38:00
+Okay. Maybe we can help you there.
+
+38:04
+A quick question on footnote one.
+
+38:08
+So do you have any sense if MPI is going to add this extra parameter
+
+38:14
+to their send and receive so that you can have the stream aware?
+
+38:20
+Actually, the person who is running that workgroup will be at
+
+38:24
+the CWE, so I think better to just come there and discuss it there.
+
+38:33
+Is there a native NCCL launcher then?
+
+38:35
+Because everything I've done has been MPI run of
+
+38:38
+applications using NCCL as the communication framework,
+
+38:41
+but can you do NCCL basically without MPI run completely?
+
+38:45
+And you need something to bootstrap the NCCL communicator.
+
+38:49
+That doesn't need to be MPI run.
+
+38:51
+You can also use SLURM and then use other communication
+
+38:55
+libraries, but it's not like, you need something to bootstrap.
+
+38:58
+Okay, but NCCL does not have its own launcher?
+
+39:05
+A bit of a naive question.
+
+39:07
+Is there a CUDA-aware MPI for Windows?
+
+39:10
+Sorry? Is there a CUDA-aware MPI for Windows?
+
+39:16
+I'm not sure, I'm sorry, I can't confirm, but I also
+
+39:24
+can't deny, because I haven't done the research on that.
+
+39:34
+Thanks for the great talk.
+
+39:35
+So on Monday, I attended this very great Nikko talk.
+
+39:41
+So there, I think, Selvin mentioned about Nikko's new feature
+
+39:47
+called the symmetrical memory.
+
+39:49
+So I'm just wondering what is the difference between that
+
+39:52
+technique and the NVSHMEM design?
+
+39:56
+So at a very high abstraction level, it's really
+
+39:58
+symmetric memory.
+
+40:00
+It's exactly the same concept of symmetric memory.
+
+40:04
+So, yeah, please come here.
+
+40:07
+There are some differences.
+
+40:10
+There will be some differences in how it's implemented because
+
+40:13
+the way we built the... We are planning to build the
+
+40:17
+NCCL device-initiated code is clearly focused on the needs
+
+40:22
+of deep learning applications.
+
+40:23
+Thank you for watching, and I'll see you in the next video.
+
+40:26
+There are different trade-offs to make compared to NVSHMEM,
+
+40:29
+but from the mental model as a developer, symmetric
+
+40:33
+memory is exactly the same, so it will be one-sided communications
+
+40:38
+with put, gets, and...
+
+40:42
+Yeah, so the APIs will look different and you will need to
+
+40:45
+do some different things, but it's at a sufficiently high abstraction
+
+40:50
+level you can think about this.
+
+40:52
+Got it.
+
+40:53
+And do you know if there is any side effects when using
+
+40:57
+NVSHMEM or the Symmetrical Memory feature when we have
+
+41:00
+a very large computing scale?
+
+41:04
+Because previously when we used some experiences that
+
+41:07
+when we used OpenSHMEM and you're trying to expand to a lot of GPUs,
+
+41:10
+GPUs, for example, or CPUs, there are some issues there.
+
+41:18
+I think that if you can come, best come to the CWE and then
+
+41:24
+we can look into that in detail.
+
+41:26
+It's a bit difficult to answer.
+
+41:29
+Thank you very much, everyone.
+
+41:30
+That was the last question.
+
+41:32
+But you can talk to Jiri outside of the room.
+
+41:34
+We have to vacate the room for the next session.
+
+41:37
+We really appreciate your attendance and thank you very much.
+

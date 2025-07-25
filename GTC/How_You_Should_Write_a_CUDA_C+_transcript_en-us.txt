@@ -1,0 +1,2120 @@
+Transcript Powered by AI
+
+How You Should Write a CUDA C++ Kernel
+
+
+00:07
+Hello, everyone, and thank you for being here today.
+
+00:10
+Over the years of working with CUDA developers, we
+
+00:13
+noticed certain patterns in the challenges they face.
+
+00:16
+And in this talk, we wanted to gather some of the recommendations
+
+00:19
+we give them to save you some time.
+
+00:24
+So today, you'll learn how to get away from a low developer
+
+00:27
+productivity, guesswork optimizations when writing
+
+00:30
+CUDA kernels, and unsafe code.
+
+00:33
+And instead, move towards a more systematic approach
+
+00:36
+to kernel development, as well as learn modern best practices
+
+00:41
+and optimization techniques, and some devise CUDA C++ libraries.
+
+00:48
+And to give these recommendations on a concrete example,
+
+00:52
+let's revisit the problem that was presented on
+
+00:54
+the previous presentation.
+
+00:56
+We'll try to simulate how N objects cool down to a room temperature.
+
+01:02
+In essence, this is a transformation.
+
+01:04
+We just take previous temperature, feed it to a function that
+
+01:07
+computes the next one.
+
+01:09
+And in C++, on a high level, you can implement that using
+
+01:12
+thrust transform in the code you see on this slide.
+
+01:16
+So let's try to reimplement the transformation using a CUDA kernel.
+
+01:21
+And the most simple CUDA kernel you can write would be looking
+
+01:24
+something like this.
+
+01:26
+We'll just slap a underscore underscore global to a
+
+01:29
+function And launch it with a triple chevron call.
+
+01:32
+Inside this lambda, we'll use a simple for-reach loop and
+
+01:36
+iterate over all the temperatures and compute the next one.
+
+01:40
+So, first, let's ask a question.
+
+01:44
+Is this a good kernel?
+
+01:46
+This splits into two components.
+
+01:50
+First component is, is it functional?
+
+01:52
+Well, yes, it produces the right result for any input we give it.
+
+01:56
+But second, the most important question for this talk is,
+
+02:00
+is it a performant kernel?
+
+02:02
+And to figure out the answer to this question, we'll
+
+02:04
+have to benchmark it.
+
+02:06
+So how do you benchmark a kernel?
+
+02:09
+The naive approach would be like to slap a std chrono before
+
+02:12
+and after the call and see what's the time difference between those.
+
+02:16
+On the right, you see I plot the time differences.
+
+02:19
+And there is something odd going on around.
+
+02:22
+You see how I increase the number of temperatures I transform.
+
+02:26
+And for thrust, the larger number of elements I give
+
+02:29
+it, the longer it takes to compute, which makes sense.
+
+02:32
+But for kernel, it's not the case.
+
+02:35
+We see some constant value there, and nothing changes.
+
+02:37
+So what's wrong?
+
+02:39
+You might know that kernels are asynchronous.
+
+02:42
+CPU just immediately invokes the next instruction after
+
+02:46
+launching a kernel.
+
+02:46
+It doesn't wait for it to finish.
+
+02:48
+When we measure the end time, kernel might not have even
+
+02:51
+started executing.
+
+02:53
+So next question is, how do you benchmark
+
+02:56
+asynchronous CUDA kernels?
+
+02:58
+And NVIDIA provides you a tool to benchmark asynchronous kernels.
+
+03:02
+It's called NVBench.
+
+03:04
+If you are familiar with something like Google Bench, you'll
+
+03:07
+find the interface very similar.
+
+03:11
+Besides that, apart from interface, NVBench would have knowledge
+
+03:17
+about CUDA timers, devices.
+
+03:19
+It will flash caches, et cetera.
+
+03:21
+So it will give you better results, more stable results, and
+
+03:26
+more accurate results for timings.
+
+03:29
+So let's take a look at the interface of NVBench.
+
+03:32
+The benchmark is just a function that takes NVBench state.
+
+03:36
+And then we register this function with NVBench benchmark row.
+
+03:41
+When you do that, you usually want to see how your kernel
+
+03:44
+performs or different inputs.
+
+03:47
+So we wanted to take a look how our kernel scales with
+
+03:50
+the problem size.
+
+03:52
+NVBench provides you a powerful parameter sweep framework.
+
+03:57
+Here I add an axis for number of elements that are powers of 2.
+
+04:02
+So the kernel will be invoked three times, one with 2 to
+
+04:05
+the power of 24, 26, and 28.
+
+04:08
+And inside the kernel, you can retrieve the number of
+
+04:10
+elements this benchmark is invoked with with state.get in64.
+
+04:17
+Inside the benchmark, we have a way to distinguish what
+
+04:21
+we are going to benchmark.
+
+04:23
+Anything that is invoked inside the exec is going to be invoked many
+
+04:27
+times to saturate certain stopping criterion to see if the underlying
+
+04:32
+distribution is representative.
+
+04:35
+But before that exec call, we can set up any state, we
+
+04:38
+can allocate memory, and this part is not benchmarked.
+
+04:44
+When you do that and benchmark thrust, algorithm, and a
+
+04:48
+kernel, you'll see output in markdown format that
+
+04:51
+looks something like this.
+
+04:53
+And the thrust takes about 2.5 milliseconds, and our
+
+04:57
+kernel is 47,000 times slower.
+
+05:00
+So there probably is room for improvement, but let's
+
+05:04
+take a step back.
+
+05:05
+And instead of rushing to optimize this kernel, let's
+
+05:09
+try to think, is it the correct approach to look at these times?
+
+05:13
+What if thrust is not a good reference, right?
+
+05:16
+Maybe it's also 47,000 times slower than something else.
+
+05:21
+But you might be in a different situation.
+
+05:23
+You might be implementing a net new algorithm that doesn't
+
+05:26
+have any reference.
+
+05:28
+What are your options in this case?
+
+05:29
+You cannot compare with anything.
+
+05:31
+So, instead of looking at speedups or elapsed times, we try
+
+05:37
+to follow a bit different approach.
+
+05:39
+We are looking at
+
+05:41
+A absolute theoretical peak of performance for a given algorithm
+
+05:44
+that we call speed-of-light.
+
+05:47
+And speed-of-light then allows us to estimate our performance
+
+05:52
+in terms of percentage of the speed-of-light we achieved.
+
+05:56
+So instead of looking at speed-up, we look at speed-of-light.
+
+05:59
+As an example, let's say we have to copy a gigabyte of data.
+
+06:04
+You can do that with a single thread.
+
+06:07
+But when you do that with a thread block, it will give
+
+06:09
+you 170x speedup.
+
+06:11
+The speedup suggests maybe we can stop optimizing this code, right?
+
+06:16
+But in reality, both of these solutions are going to be less than
+
+06:19
+2% of what the memory bandwidth can provide you on this GPU.
+
+06:24
+So both approaches are bad.
+
+06:27
+So how do we estimate speed of light for our kernel then?
+
+06:31
+One of the metrics that can help us is called arithmetic intensity.
+
+06:35
+The idea is that
+
+06:37
+Data loading is the most expensive thing you can
+
+06:39
+do, so you want to reuse any data you already loaded to GPU.
+
+06:44
+And this is a metric that estimates this.
+
+06:47
+You divide the number of arithmetic operations by the number of
+
+06:50
+memory bytes you loaded.
+
+06:52
+So here, let's say, for the first line of code, we have
+
+06:57
+exactly one arithmetic operation.
+
+06:59
+We add two floating-point values.
+
+07:03
+To do that, one of these values is stored in memory, so we
+
+07:06
+have to load two bytes and store two bytes back.
+
+07:09
+So we get some arithmetic intensity.
+
+07:11
+On the second lane, we have to load two variables, so
+
+07:15
+the arithmetic intensity is lower.
+
+07:20
+Then you can plot a performance of your kernel as a function
+
+07:24
+of arithmetic intensity.
+
+07:26
+And the graph would be called roofline analysis.
+
+07:29
+It will be bound by two lanes.
+
+07:31
+On one side, it will be bound by maximal peak compute that
+
+07:34
+your GPU can provide you.
+
+07:36
+But on the other hand, it will be bound by maximal bandwidth
+
+07:40
+that the GPU can move data with.
+
+07:44
+Then you can put two data points.
+
+07:46
+On one side, you'll have CAPI.
+
+07:48
+So, CAPI doesn't do any arithmetic, so it is going
+
+07:51
+to be on the leftmost memory-bound part of the spectrum.
+
+07:56
+While matrix multiplication is going to be far to the right.
+
+08:00
+On each byte that you load, you compute a lot.
+
+08:03
+And the point to see is transform now.
+
+08:06
+Transform is much closer to CAPI than to matrix multiplication.
+
+08:10
+In fact, we'd have to have about 200 times more compute
+
+08:14
+per each element we load to shift it into a compute-bound area.
+
+08:19
+So what does it give us?
+
+08:20
+It gives us an opportunity to kind of ignore all the
+
+08:23
+computation that is going on in our kernel and focus on the memory
+
+08:26
+when analyzing the performance.
+
+08:30
+And NVBench provides you a way to easily estimate speed of
+
+08:33
+light for memory-bound algorithms.
+
+08:36
+What you can do is, you can report how many elements of a certain type
+
+08:40
+you read and write in your kernel.
+
+08:43
+If you do that, NVBench output will get extended
+
+08:48
+with a few more columns.
+
+08:50
+In these columns, you'll see what's the percentage of bandwidth
+
+08:55
+utilization your kernel achieves.
+
+08:57
+And here we see that thrust achieves 84% of speed of light,
+
+09:02
+while our kernel achieves pretty much zero.
+
+09:07
+Why is that?
+
+09:08
+Why are our kernels so inefficient?
+
+09:11
+So here is my mental model for a GPU.
+
+09:14
+We have multiple Streaming Multiprocessors, each
+
+09:16
+connected with this kind of roads to the memory.
+
+09:19
+And then each SM maintains multiple warps for execution.
+
+09:24
+Our warp right now has exactly one thread.
+
+09:26
+All of the other threads are inactive, so it's fine.
+
+09:29
+We have one load produced by one warp, and one warp
+
+09:33
+can issue an instruction.
+
+09:35
+It's becoming eligible, so SM can select this warp for execution.
+
+09:40
+And currently, one warp is eligible.
+
+09:42
+Let's select its load instruction.
+
+09:45
+We start loading data, but load propagates.
+
+09:47
+It has to go all the way to memory, go back, so it'll take some time.
+
+09:51
+Well, the...
+
+09:53
+Data transaction is in flight.
+
+09:55
+Warp has nothing to do.
+
+09:56
+Next instruction would use this result.
+
+09:58
+So we have to wait, and we waste this cycle.
+
+10:02
+Now you see the GPU is pretty much doing nothing.
+
+10:04
+It's just memory going on.
+
+10:07
+And this is what I'm trying to track in the left corner with the
+
+10:10
+number of wasted cycles on the GPU.
+
+10:13
+So currently, we have one memory transaction in flight,
+
+10:16
+one wasted cycle.
+
+10:18
+So, we keep waiting, keep waiting, and then finally, GPU
+
+10:23
+receives the data back, and now it can compute arithmetic operation.
+
+10:28
+So, overall, we wasted four cycles.
+
+10:30
+We don't want to do that. We want more data to be in flight.
+
+10:34
+How can we achieve that?
+
+10:37
+One of the obvious ways is, let's throw more threads at it.
+
+10:40
+So we'll this time launch a thread block instead of
+
+10:43
+just a single thread.
+
+10:45
+And then inside this kernel, we'll partition all of the
+
+10:48
+temperatures between these threads.
+
+10:50
+So here I launched 256 threads.
+
+10:53
+Let's see how this affects our performance model.
+
+10:57
+Now we have one warp that has more threads than one.
+
+11:01
+It should be 32, but I wouldn't fit it on the slide, so
+
+11:03
+let's pretend it's 2.
+
+11:06
+First warp issues two loads, but now, instead of just waiting
+
+11:10
+for these loads to return to SM, SM can select a different
+
+11:15
+eligible warp, so second warp, from the same thread block.
+
+11:19
+It has also some loads to perform.
+
+11:22
+So now we have four memory operations in flight, but
+
+11:25
+still wasting cycles, right?
+
+11:27
+First and second warp are just waiting here.
+
+11:31
+So we wasted pretty much the same amount of cycles, but
+
+11:35
+this time we performed four memory operations instead of just one.
+
+11:39
+So our throughput improved, and the data that NVBench
+
+11:43
+reports kind of supports that.
+
+11:45
+We see a huge speedup, but as we discussed, speedup is
+
+11:49
+not a good metric.
+
+11:50
+Both of these solutions are less than 1% of bandwidth on H200.
+
+11:53
+So let's use more of it.
+
+12:00
+To use more threads, we would have to launch more thread blocks.
+
+12:05
+So here you see a kernel where I partition all of the work
+
+12:08
+between threads of a thread block.
+
+12:11
+And this raises a few questions.
+
+12:14
+First question is, which block size should I choose?
+
+12:18
+Unfortunately, there is no rule of thumb here.
+
+12:21
+There is a rule of thumb of selecting 32, multiples of 32, and
+
+12:25
+selecting 256 as a good default, but there is no best thread
+
+12:28
+block size that would fit everyone.
+
+12:31
+We'll cover in detail why it's the case a bit late in this talk.
+
+12:36
+Second question is which grid size to choose, or how many
+
+12:41
+thread blocks to launch.
+
+12:43
+And this is a bit easier, because usually grid size
+
+12:46
+is a function of problem size.
+
+12:48
+We know that we want to reach a certain level of how many
+
+12:52
+items each thread processes.
+
+12:54
+So let's say it's one.
+
+12:55
+To process each element by a single thread, we want to
+
+12:59
+launch two thread blocks here.
+
+13:01
+But simple division of problem size by the thread block size
+
+13:05
+wouldn't work for us.
+
+13:07
+So here we have six elements to process.
+
+13:09
+If we just divide it by thread block size, which is four,
+
+13:12
+we'll get one thread block, which is insufficient.
+
+13:16
+We'll end up having multiple threads having to process
+
+13:18
+more than one element.
+
+13:20
+So we use CLDIF, it's a tool that rounds up
+
+13:23
+The division then gives you two thread blocks in this case.
+
+13:28
+And we just caused out-of-bounds access, because now we launch more
+
+13:32
+threads that access, let's say, six and seven elements in the array.
+
+13:38
+How can you detect that out-of-bound access?
+
+13:41
+NVIDIA provides you a tool called compute-sanitizer.
+
+13:45
+If you compile your code with the command you see on the
+
+13:49
+slide, it will allow you to see the line in which invalid
+
+13:54
+memory access happened.
+
+13:58
+But this is not the only tool that can help you detect
+
+14:01
+invalid memory access.
+
+14:03
+If we were writing just a normal C++ code, we would
+
+14:07
+give you a recommendation using stdspan, because stdspan is a
+
+14:10
+safer alternative to raw pointers.
+
+14:13
+It includes size information, it can do bounce checking
+
+14:15
+with certain flags of compilation, and it's also lightweight.
+
+14:20
+It doesn't own the data, it just references that.
+
+14:24
+But when we try to use stdspan in our kernel,
+
+14:26
+We get a compilation error.
+
+14:28
+It says that we're invoking a host function from a kernel,
+
+14:31
+which doesn't make sense at first, but then you think
+
+14:35
+that no one actually implemented this standard library for CUDA.
+
+14:40
+No one annotated the member functions of std
+
+14:43
+span with __device.
+
+14:45
+So does it mean you have to reimplement any possible
+
+14:49
+vocabulary type you might end up needing to use yourself?
+
+14:54
+Well, not really.
+
+14:56
+NVIDIA provides a libcudacxx library that provides many
+
+14:59
+vocabulary types.
+
+15:01
+These are not only supporting GPU execution, but also optimized
+
+15:04
+for execution on GPU.
+
+15:06
+So you can find things like pair, tuple, option, variant,
+
+15:10
+complex, span, and even atomic.
+
+15:14
+So using libcudacxx would be as easy as slapping CUDA
+
+15:20
+column-column before a std span.
+
+15:25
+Now let's see how this affected performance when we threw
+
+15:28
+more thread blocks at the problem.
+
+15:30
+Now each SM has a warp to select from.
+
+15:33
+First warp of each SM issues two loads, so we have four
+
+15:38
+memory operations in flight.
+
+15:40
+Second warp issues more.
+
+15:42
+And then we have peaked at eight memory operations in
+
+15:45
+flight, which is good, but now we are wasting cycles again.
+
+15:49
+These warps have nothing to do.
+
+15:53
+So we keep waiting, keep waiting.
+
+15:56
+And we wasted four cycles, five cycles this time, but this time we
+
+16:01
+processed eight elements, which is better, and performance improves.
+
+16:04
+And this is supported by Benchmark's results.
+
+16:06
+Again, we see that we reach 30% of memory utilization.
+
+16:14
+In reality, we launched much more than two thread blocks.
+
+16:19
+We launched thousands of them.
+
+16:21
+But this begs the question, what should we do next?
+
+16:24
+We launched as many threads as GPU can sustain.
+
+16:27
+And yet, we are not achieving anywhere close to the performance
+
+16:30
+we want on this GPU.
+
+16:32
+So to get an answer to this question, what to do next,
+
+16:35
+we have to revisit Little's Law.
+
+16:38
+Little's Law relates latency, throughput, and concurrency.
+
+16:42
+So latency in our case is the length of the road
+
+16:46
+to memory and back.
+
+16:47
+So we have two clocks to the memory, two clocks back.
+
+16:51
+It's four cycles of the latency in general.
+
+16:55
+And throughput is arrival rate.
+
+16:56
+It's how many operations we can put on the GPU.
+
+17:01
+So here it's four.
+
+17:03
+LittleSlaw says that to achieve peak throughput, we have to
+
+17:08
+multiply latency by throughput and get eight operations in
+
+17:13
+flight for this case.
+
+17:15
+But how can we do that?
+
+17:16
+We already launched as many threads as we can.
+
+17:20
+What we have to do is we have to have more threads
+
+17:25
+issuing more memory operations from a single thread.
+
+17:31
+But it's not clear how we can do that.
+
+17:33
+To figure out the answer, we can take a look at the profiler.
+
+17:37
+Nsight Compute is an indispensable tool in
+
+17:39
+developing any CUDA kernels.
+
+17:42
+It allows you to see the source correlation and understand where
+
+17:46
+in your kernel the time is spent.
+
+17:49
+So let's focus on that time correlation.
+
+17:52
+The output looks something like this.
+
+17:54
+We have assembly for our kernel.
+
+17:56
+It's very simple. We should just have a single load, fma
+
+18:00
+is fused, multiply, add on this load, and then we have
+
+18:03
+a store, back to memory.
+
+18:06
+In the second column, you see warp stalling samples.
+
+18:08
+It's where the time is spent and why the time is spent there.
+
+18:13
+But there is something odd.
+
+18:14
+We see that all the time is spent on fma.
+
+18:18
+But we just told you that the kernel we're developing
+
+18:22
+is memory-bound, not compute-bound.
+
+18:24
+So it doesn't make sense.
+
+18:26
+Well, the missing piece of the puzzle here is that GPU doesn't
+
+18:31
+wait on a given instruction.
+
+18:33
+Instead, it waits on the instruction that is blocked
+
+18:37
+on any of these operands.
+
+18:40
+So load was issued immediately.
+
+18:43
+GPU hasn't waited for it to finish.
+
+18:45
+Next we went to FMA, and FMA operand waits on load results,
+
+18:50
+so FMA has to wait.
+
+18:52
+That's why Insight Compute shows you the time for load
+
+18:58
+basically on FMA lane.
+
+19:01
+But this is good because it gives us an opportunity to
+
+19:04
+optimize the code further.
+
+19:06
+Now we know that multiple load instructions wouldn't
+
+19:08
+depend on each other results, so we can issue multiple loads and get
+
+19:12
+higher concurrency from the kernel.
+
+19:17
+Okay, so how we can do that?
+
+19:19
+We can have a for loop and just local memory, populate
+
+19:24
+it with the data from global memory, and we'll have, let's say,
+
+19:28
+eight load operations in flight.
+
+19:32
+And then we'll just process this local memory one element at
+
+19:35
+a time and store the result back.
+
+19:38
+Let's see on our mental model how this affects the performance.
+
+19:44
+Okay, this time we start just like the previous kernel,
+
+19:46
+nothing changed, but after we issued 8 memory operations,
+
+19:53
+something else is going on.
+
+19:54
+Now, the first warp has another load instruction to issue,
+
+19:59
+so instead of just waiting, it produces another load, so does
+
+20:02
+the second warp on HSM, and we pick up 16 memory operations in flight.
+
+20:07
+While, notice how none of the warp are wasting any cycles, it's either
+
+20:13
+issuing a load or processing the result that returned from memory.
+
+20:19
+So, the next question is which number of items we should
+
+20:23
+choose to load from each thread.
+
+20:26
+The answer depends on specific GPU.
+
+20:29
+It makes sense because each GPU has different bandwidth, different
+
+20:32
+number of SAMs, meaning that you'll need different concurrency.
+
+20:36
+If you want to figure out how to compute the bytes-in-flight
+
+20:39
+needed for each SAM, attend And the talk you see on the slide.
+
+20:44
+For us, we'll select, let's say, eight and should be sufficient.
+
+20:47
+And when we do that, when we load eight items at a time, you'll
+
+20:50
+see that performance reaches 79%.
+
+20:52
+So we're much better and much closer to thrust, but still behind.
+
+20:57
+So why is that?
+
+20:59
+Maybe we launched insufficient number of loads from each thread.
+
+21:04
+Let's launch 200 memory operations from each thread this time.
+
+21:10
+And something unexpected happens.
+
+21:12
+The performance tanks to 30%.
+
+21:13
+So, why is that?
+
+21:16
+To answer this question, we'll have to consider this kernel from
+
+21:19
+the perspective of the compiler.
+
+21:22
+When we have such a large number of registers per thread, the compiler
+
+21:28
+doesn't know what's the thread block size we're about to launch.
+
+21:32
+It means that if you take that many registers per thread multiplied
+
+21:36
+by, let's say, a thousand threads,
+
+21:39
+In a block, the number of registers will exceed the limit that SM has.
+
+21:46
+So not a single thread block will be able to be launched on SM.
+
+21:51
+So what compiler does, it spills all of these registers
+
+21:54
+into something called local memory.
+
+21:57
+And you can find local memory use with something like co-opt-dump
+
+22:02
+tool that shows you compiles And you'll see that local
+
+22:06
+annotation there.
+
+22:09
+And the problem is that local memory is physically living in the
+
+22:13
+same place where global memory is.
+
+22:15
+So it has the same latency and bandwidth as accessing
+
+22:19
+global memory, so it is expensive.
+
+22:22
+It's not true that you should always avoid local memory,
+
+22:25
+but as a rule of thumb, if you can avoid that, you should do that.
+
+22:30
+So what kind of tools do you have to avoid local memory?
+
+22:35
+Well, first tool is to tell compiler what's this
+
+22:37
+thread block size.
+
+22:38
+We can do that with launch bounds.
+
+22:40
+You provided the maximal thread block size that your kernel
+
+22:43
+will be launched with.
+
+22:45
+If you do that, compiler will be able to affect the heuristics
+
+22:49
+for register allocation and give more registers per each thread.
+
+22:56
+Besides that, by default, NVCC unrolls all of the small
+
+23:00
+loops if it sees the bounds of the loop at compile time.
+
+23:04
+But our loop is not small, it's like 200 elements.
+
+23:07
+So NVC might decide not to optimize and unroll this loop.
+
+23:12
+You can affect compiler heuristics with pragma-unroll.
+
+23:15
+If you put pragma-unroll on your loop, you'll force NVC
+
+23:20
+to unroll this loop.
+
+23:22
+OK, with this compiler knobs, we somewhat regained the performance
+
+23:26
+and get 65% speed of light back.
+
+23:29
+But it's still lower than what we used This is to have with just...
+
+23:36
+Instruction Level Parallelism.
+
+23:38
+So why is this happening?
+
+23:41
+Well, as we discussed, a register file is having a limited size,
+
+23:47
+and it's unique per SM.
+
+23:51
+Now, when you try to launch a thread block that needs
+
+23:55
+200 registers per thread, you'll end up allocating about
+
+24:02
+57k registers on each SM.
+
+24:05
+And this means that not a single thread block can fit
+
+24:10
+other than a single one, right?
+
+24:12
+But when we allocated 8 items per thread, we could fit 8
+
+24:16
+thread blocks because each thread block only needed 4k registers.
+
+24:23
+So, this affects concurrency, because the first case ends up
+
+24:28
+running 200 threads, but the second case ends up running 2,000 threads.
+
+24:36
+But another question you can ask by looking at this picture
+
+24:38
+is, why aren't we launching more thread blocks?
+
+24:41
+We still have space in the register file.
+
+24:44
+Well, that's because each StatsAM has a limit of the
+
+24:47
+number of warps, of the number of threads that it can sustain.
+
+24:55
+Occupancy is the ratio of active warps on a SAM to the
+
+24:59
+maximum warp the SAM can support.
+
+25:02
+So Insight Compute makes it easy to detect occupancy in your case.
+
+25:06
+So here, comparing 8 and 200 items per thread, we
+
+25:10
+see that only the first kernel achieves high occupancy.
+
+25:15
+So should we always aim for the maximized occupancy?
+
+25:19
+Well, it depends.
+
+25:21
+For a simple kernel like a transform, probably yes.
+
+25:25
+But for other kernels, you might trade some occupancy
+
+25:29
+for more registers, more L1 cache, or shared memory.
+
+25:35
+So it's a compromise that you have to evaluate for.
+
+25:38
+That's why there is no one thread block size that fits all.
+
+25:45
+So what are your options if a high occupancy is
+
+25:48
+preferred for your kernel?
+
+25:50
+Well, good news is that you don't have to have Nsight computing
+
+25:55
+the loop to maximize occupancy.
+
+25:58
+Instead, CUDA provides you occupancy API, and Thrust
+
+26:02
+is actually using that to maximize for occupancy in
+
+26:05
+the transform at runtime.
+
+26:08
+But that's not everything Thrust does to improve performance.
+
+26:13
+Previously, we increased the number of bytes in flight
+
+26:16
+with Instruction Level Parallelism.
+
+26:19
+But we can actually load more data with just a single instruction.
+
+26:24
+And this is called Victorized Memory Accesses.
+
+26:28
+Instead of loading just a single half, we can load two
+
+26:31
+of them with a half-two datatype.
+
+26:35
+half2 essentially stores two halves in it.
+
+26:38
+And when I load a single half2, just one 4-byte
+
+26:41
+instruction is issued.
+
+26:46
+With this we can get one step closer to thrust, we achieve
+
+26:49
+a bit better memory utilization, but looks like we are still
+
+26:53
+missing something.
+
+27:01
+There is a nuance in how Thrust is loading data.
+
+27:05
+As you saw, if we just increase the number of items per thread,
+
+27:10
+the number of registers starts limiting occupancy.
+
+27:14
+And to work around that, Thrust is using a new feature of modern GPUs.
+
+27:19
+We can issue an asynchronous copy from global memory to shared
+
+27:23
+memory, avoiding any register as an intermediate destination.
+
+27:28
+With this, we can asynchronously load as much data as we
+
+27:32
+want, and then process it, one element at a time.
+
+27:37
+And this functionality is relying on a high-level
+
+27:39
+concept of pipelines available in CUDA namespace.
+
+27:45
+But some of the newest API might be missing such a high-level exposure.
+
+27:50
+And one of the examples would be asynchronous bulk copies
+
+27:53
+available on the newest hardware.
+
+27:57
+When there is no high-level API available to you, developers
+
+28:01
+usually opt into the tool of last resort and start
+
+28:06
+writing inline PTX.
+
+28:09
+Although this approach works, it's not type-safe or productive,
+
+28:14
+you have to go into documentation and figure out the concrete
+
+28:17
+spelling of each instruction.
+
+28:20
+That's why CUDA provides aptx wrappers for you.
+
+28:23
+The code you see here on the slide is exactly equivalent to the
+
+28:27
+one you saw on the previous slide.
+
+28:30
+CUDA aptx wrappers are easier and safer to use compared
+
+28:34
+to inline assembly.
+
+28:37
+And among other things, Thrust is using them to
+
+28:40
+access a copy-async bulk.
+
+28:45
+So, overall, Thrust implementation of Transform
+
+28:48
+looks something like this.
+
+28:51
+It relies on every function that we discussed today to provide
+
+28:55
+peak performance, and there should be no reason to reimplement it.
+
+29:00
+In other words, the best kernel is the one you don't have to write.
+
+29:04
+So write a custom kernel only when there is no library available
+
+29:09
+to you that suits your use case.
+
+29:12
+But when you have to write a kernel,
+
+29:15
+The logic is no different.
+
+29:17
+Authoring a kernel doesn't mean you have to re-implement
+
+29:20
+everything from scratch.
+
+29:22
+CUDA offers a range of cooperative libraries that speed up your kernel
+
+29:26
+development process and speed up kernel's performance as well.
+
+29:31
+For example, CUP provides you general-purpose cooperative
+
+29:35
+algorithms for reductions, prefix sums or sorting.
+
+29:39
+Meanwhile, cuBLAS handles co-operative linear algebra,
+
+29:43
+and cuFFTDx will provide you fast Fourier transforms.
+
+29:48
+This and other device-side libraries will use other modern
+
+29:52
+hardware features like DPX, Instructions, Redux, etc., so you
+
+29:56
+don't have to complicate your code.
+
+30:00
+So, as a takeaway, write custom CUDA kernels only when you
+
+30:05
+have to, when there is no library that satisfies your need.
+
+30:09
+Besides that, when you have to write a kernel, follow
+
+30:12
+a speed-of-flight approach to discover algorithm bottlenecks,
+
+30:15
+discover opportunities for optimization, understand
+
+30:19
+when to stop optimizing your kernel, or to optimize
+
+30:22
+without a reference implementation.
+
+30:25
+Besides that, embrace modern CUDA C++.
+
+30:29
+Use vocabulary types like span, mdspan, tuple, etc.
+
+30:34
+Use libcudacxx for latest hardware features.
+
+30:39
+On-device, use CAP for block and warp-level
+
+30:42
+general-purpose algorithms.
+
+30:45
+Use cuBLASDx for linear algebra, FFTDx for FFTs, etc.
+
+30:49
+And use developer tools like compute-sanitizer for
+
+30:52
+kernel-correctness checking, cuda-gdb for cuda-kernels
+
+30:55
+debugging, and Nsight Systems to identify bottlenecks
+
+30:59
+in your application, while Nsight Compute for in-depth
+
+31:01
+profiling of your kernels.
+
+31:05
+And since you are in this room, you'll likely be interested in
+
+31:07
+the talks you see on this screen.
+
+31:09
+And thank you, that's all I wanted to share today.
+
+31:19
+All right, we have time for a few questions.
+
+31:21
+I will walk around.
+
+31:28
+So before async memcopy was around, one of the ways to
+
+31:34
+try to overlap latency, memory latency, was to oversubscribe
+
+31:39
+the SM, so give it 10, 20x more threads, thread blocks, so that the
+
+31:47
+scheduler would do that for you.
+
+31:49
+Now you have this, and so you need to implement pipelines,
+
+31:52
+and so you need to do a bunch of stuff, is the, I'll call it
+
+31:57
+the old way, if I don't want to do async mem copies, and I just want
+
+32:02
+to have the scheduler do this for me, am I still going to get, could
+
+32:07
+I get the equivalent performance of kind of doing that, and have
+
+32:11
+the scheduler do that logic for me, rather than doing the pipelining?
+
+32:17
+Oh, okay.
+
+32:18
+I haven't optimized for backwards movement here, sorry.
+
+32:26
+This is your case, this 30% on H200 is the top number of concurrent
+
+32:31
+threads that GPU can sustain.
+
+32:34
+So you cannot go beyond that with just using a single thread,
+
+32:37
+single item approach.
+
+32:40
+You can achieve more with Instruction Level Parallelism,
+
+32:43
+you saw how we end up being like
+
+32:45
+In the ATS domain with Instruction Level Parallelism, so you can
+
+32:50
+achieve that without asynchronous copies, but beyond that, to
+
+32:54
+move beyond that, you'll have to use asynchronous copies.
+
+33:04
+Check this.
+
+33:10
+This has the maximum number of threads that is possible.
+
+33:13
+GPU can sustain a certain amount of them.
+
+33:16
+If you launch, let's say, 4 billion threads, I don't know, they're
+
+33:20
+not all running simultaneously.
+
+33:21
+Some of their subset is present on GPU at the same time.
+
+33:25
+So when all of these threads are active, 30% is the top
+
+33:29
+performance you can saturate.
+
+33:32
+To go beyond that, you'll have to use Instruction Level Parallelism.
+
+33:35
+It's not yet asynchronous copies, but it increases the
+
+33:38
+concurrency further towards 80%.
+
+33:40
+So you can achieve more or less good performance here on H200 with
+
+33:46
+just Instruction Level Parallelism.
+
+33:48
+But to go, like, last percentages of the performance, you'll
+
+33:52
+have to use advanced techniques like asynchronous copies.
+
+33:54
+We haven't mentioned that we use programmatic dependent
+
+33:57
+launch to tighten the space between two kernel launches, etc.
+
+34:01
+So there are many techniques to get to that last percent.
+
+34:07
+Hi, this is an interesting mind shift.
+
+34:10
+This talk and the one before that in the past it was always
+
+34:13
+start with the kernel, create your explicitly the kernel,
+
+34:16
+then work your way up.
+
+34:17
+And here you're saying start from the higher level.
+
+34:20
+The question is, we're starting to use Copilot in the office
+
+34:24
+as code generation and the like.
+
+34:26
+If I were to enter, write a kernel for me, would it know, would it,
+
+34:30
+do you know by, from your testing or if you looked at it, use Thrust
+
+34:35
+or will it go back to the standard?
+
+34:38
+You know, low-level idioms.
+
+34:40
+That's a very good question, actually.
+
+34:42
+The problem is...
+
+34:43
+With this LLMS, then when you ask it for a reduction, it
+
+34:48
+tries to implement a reduction for you instead of using a reduction.
+
+34:52
+So there is like two mindsets of I want to see how something is
+
+34:55
+implemented or I want a production software, I just need a sort.
+
+35:01
+So I think you have to tweak your queries to it a bit so
+
+35:05
+that it provides you tools.
+
+35:07
+Like, you want to say, don't implement this algorithm from
+
+35:10
+scratch, use libraries as much as possible, and then
+
+35:13
+the output will be much better suited for production software.
+
+35:19
+I'd also say this is something we're very actively working
+
+35:21
+on to make sure that these models are recommending these
+
+35:24
+more modern best practices.
+
+35:29
+Thank you.
+
+35:34
+I'm usually one step beyond naive, and in my recent work with problems
+
+35:43
+that involve very large memory spaces, where I have to constantly
+
+35:48
+access global memory, in the profiler I was informed that I have
+
+35:56
+an excess amount of transactions.
+
+35:59
+And learning from that, I found that if you have a single
+
+36:08
+thread access, a single index, you're going to incur a lot
+
+36:13
+of transactions, which adds a lot of latency to the constant
+
+36:18
+access of global memory.
+
+36:19
+So I start putting things into 32-bit words and try
+
+36:22
+and move a 32-bit word.
+
+36:27
+to a single thread and then have actually a thread work
+
+36:31
+on the equivalent of four indices instead of just one.
+
+36:36
+And I was kind of hoping you would illustrate something
+
+36:40
+like that and I was wondering why, am I off base with that
+
+36:46
+or is that a valid approach?
+
+36:48
+Yeah, this is exactly the vectorized memory accesses
+
+36:50
+you're describing.
+
+36:50
+So instead of just loading, let's say, if you have char or
+
+36:53
+short type, you fuse many of them into a single architectural word.
+
+36:57
+And this is what's happening when you, instead of loading
+
+36:59
+just a single half, you have a vectorized half too.
+
+37:03
+So this is essentially, in spirit, the same thing you're discussing.
+
+37:09
+Yeah, there is a blog post on this if you are interested.
+
+37:20
+Continuing with this, so is there a size of packed memory
+
+37:28
+that's best for maximizing memory bandwidth from DDR?
+
+37:33
+And do these operations work with intrinsics like TMA access or the
+
+37:41
+async memcopy and things like that?
+
+37:43
+For team access, I'm not an expert, there is going to
+
+37:46
+be a session on maximizing bandwidth and throughput of
+
+37:49
+GPUs, so you'll attend those, and probably speakers would be better
+
+37:54
+equipped to answer this question.
+
+37:56
+For best size of memory operation,
+
+38:00
+The transactions are happening at the granularity of a sector,
+
+38:03
+which is 32 bytes, so when you load data, it's the least
+
+38:07
+amount of data that will go to SM.
+
+38:10
+But four of these sectors form a cache line of 128 bytes.
+
+38:14
+So loading a single cache line from memory is going
+
+38:18
+to have lower latency than loading, let's say, two sectors twice.
+
+38:22
+So as soon as you saturate, let's say, 128 bytes going
+
+38:26
+from a single load from a warp,
+
+38:30
+Other than that, you can just produce more of these
+
+38:32
+instructions, but beyond that, I think it's optimal.
+
+38:37
+One of the things I want to mention, too, is that under
+
+38:39
+that memcpy-async, it is using TMA.
+
+38:41
+It's abstracting the asynchronous memory copy for you.
+
+38:52
+You may accept the, the bulk version accepts the number
+
+38:56
+of bytes you want to copy, so you say, like, I need a kilobyte to go
+
+38:59
+into shared memory, it'll support any size, what it cares about
+
+39:03
+is alignment, and you want to tell it, is my data aligned properly,
+
+39:07
+so it's the second property, like, you want 128 to say aligned
+
+39:11
+pointer, and that's sufficient.
+
+39:16
+Just a quick thing, what is it?
+
+39:17
+Underscore, underscore, half?
+
+39:19
+Oh, sorry, that's a data type that is FP16.
+
+39:33
+Thanks again for your talk, Georgii.
+
+39:35
+I have a question about asynchronous memory copies.
+
+39:38
+So in that section of the talk, we saw usage of CUDA
+
+39:42
+PTX as well as CUDA Pipeline.
+
+39:45
+I was curious about whether or not we could achieve a
+
+39:49
+similar performance just using cooperative groups.
+
+39:53
+So cooperative groups is many things.
+
+39:57
+Functionality of co-operative groups is to represent a group
+
+39:59
+of threads, and it happens to provide you asynchronous
+
+40:02
+API for memecopies as well.
+
+40:05
+There are different flavors of it, like from the API perspective, the
+
+40:09
+lower level would be available in co-operative groups, and pipeline
+
+40:12
+abstraction allows you to do a bit more things, like, dynamically.
+
+40:15
+So they're not exactly equivalent, but you can achieve.
+
+40:18
+We use co-operative groups memecopy async, I think, in
+
+40:20
+the transform as well.
+
+40:31
+Hi, in the takeaway slide I saw that we replace intrinsics
+
+40:39
+with atomics, could you explain a little bit more?
+
+40:41
+Yes, thank you for the question.
+
+40:45
+The problem with atomics is that some people, even in
+
+40:49
+the published books, treat atomic intrinsic as a strong
+
+40:54
+memory operation, something like release-acquire memory ordering.
+
+40:57
+But it's not. It's a really weak memory ordering.
+
+41:00
+So when you have, let's say, a message-passing interface and
+
+41:02
+you want to populate some message and then issue atomic operation,
+
+41:07
+the reordering can still happen.
+
+41:09
+So it's not safe to assume that this atomic intrinsics is
+
+41:13
+like atomic flavor of std atomic.
+
+41:15
+It's not.
+
+41:16
+If you want a safe alternative, you should use CUDA std atomic ref.
+
+41:21
+And that would embed all the proper memory semantics into
+
+41:24
+that operation that you can further relax if you know
+
+41:27
+what you're doing.
+
+41:28
+So it's a safe alternative if you should use Atomics from libcudacxx.
+
+41:36
+Yeah, we have a question.
+
+41:39
+I think this will be the last question, but I want to plug
+
+41:42
+again, Georgii will be at the CUDA developer best practices,
+
+41:45
+CWE, that's at 2, and the CWE pods are over that way, I believe.
+
+41:52
+Using the lower-level precision, FP16.5, are you running into
+
+41:56
+any floating-point errors, round-off errors?
+
+42:02
+So in this case the simulation is quite the toy example.
+
+42:06
+I wasn't interested in the like concrete precision.
+
+42:08
+It was just to show the memory effects is easier to do on
+
+42:12
+a smaller memory transactions.
+
+42:18
+All right, with that, let's thank Georgii again, and then
+
+42:20
+we'll be wrapped up here.
+

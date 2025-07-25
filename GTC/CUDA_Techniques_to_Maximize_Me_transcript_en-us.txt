@@ -1,0 +1,2273 @@
+Transcript Powered by AI
+
+CUDA Techniques to Maximize Memory Bandwidth and Hide Latency
+
+
+00:05
+Hello all, and thank you for joining our session.
+
+00:09
+It will be split in two parts.
+
+00:12
+In the first part, I will be talking about how to
+
+00:15
+maximize memory bandwidth in high latencies on modern GPUs.
+
+00:20
+And then in the second part, my colleague Allard is going
+
+00:23
+to talk about the CUDA memory model and its implications on writing
+
+00:27
+correct and efficient CUDA kernels.
+
+00:29
+He will also close the talk with
+
+00:34
+techniques on how to efficiently synchronize and exchange data
+
+00:38
+within a thread block cluster.
+
+00:39
+Now let's get started.
+
+00:45
+So a modern GPU memory hierarchy
+
+00:49
+includes a large register file, an L1 and shared memory
+
+00:53
+cache per SM, and then across the SMs we have a shared L2
+
+00:57
+cache followed by our main memory.
+
+01:01
+Now if we look at the evolution of our GPUs over the last decades,
+
+01:08
+We will observe that with every new GPU generation, we
+
+01:12
+typically get more SMs to perform computations, a larger shared
+
+01:18
+memory slash L1 per SM, a larger L2 with higher bandwidth, and a larger
+
+01:24
+DRAM also with higher bandwidth.
+
+01:29
+Now, shared memory capacity not only increases typically
+
+01:33
+with every generation, but with Hopper, we also introduced
+
+01:37
+distributed shared memory.
+
+01:39
+So this allows us, allows SMs within a GPU processing
+
+01:46
+cluster to access the shared memory of a different SM.
+
+01:51
+So this essentially increases the shared memory capacity even further
+
+01:56
+by a factor of the cluster size.
+
+02:00
+Now, distributed shared memory is exposed in the CUDA programming
+
+02:03
+model as an optional level in the thread hierarchy called
+
+02:07
+thread block clusters.
+
+02:08
+So a thread block cluster is essentially a group of
+
+02:11
+thread blocks that is guaranteed to be co-scheduled.
+
+02:15
+Now, in the second part of the presentation, Allard is going
+
+02:18
+to show you how to efficiently synchronize and exchange data
+
+02:22
+within a thread block cluster.
+
+02:27
+Now if we switch focus to DRAM bandwidth and especially
+
+02:32
+in correlation to the number of the SMs, we will see that on the one
+
+02:37
+hand, with every new generation, bandwidth typically increases
+
+02:42
+rapidly, like we almost have like 2x with every new generation.
+
+02:46
+But this is not the case for the number of the SMs.
+
+02:53
+So essentially this means that with every new generation,
+
+02:57
+we have more bandwidth available per SM to saturate.
+
+03:02
+So the question here is, how do we saturate this bandwidth
+
+03:06
+with our CUDA kernels?
+
+03:09
+Will our older CUDA kernels achieve speed of light on newer GPUs?
+
+03:15
+So, these are questions I'm going to try and answer right away.
+
+03:19
+So, to do this, we are going to look into how to maximize
+
+03:23
+memory bandwidth through the lens of Little's Law from
+
+03:27
+mathematical queuing theory.
+
+03:29
+So, Little's Law tells us that the mean number of units
+
+03:33
+in a system, right, is given by the product of the mean arrival
+
+03:37
+rate times the mean residency time.
+
+03:41
+Now if we apply this law to an escalator that fits one
+
+03:45
+person per step, is 20 steps tall, and for which a step
+
+03:50
+arrives every two seconds, then Little's Law tells us that
+
+03:54
+if, for example, we only have one person in flight, the throughput
+
+03:59
+we achieve for our escalator is one divided by the residency
+
+04:03
+time, which is 40 seconds.
+
+04:05
+So this gives us a throughput of 0.025, right, out of
+
+04:06
+a maximum of 0.5.
+
+04:11
+Now, if the question is, how do we actually maximize the
+
+04:14
+throughput of our escalator?
+
+04:16
+Then again, we simply apply Little's law using the peak
+
+04:20
+arrival rate of 0.5.
+
+04:22
+And this tells us that we need 20 persons in flight
+
+04:25
+to maximize the throughput.
+
+04:28
+Now, if we apply this law to GPU memory, we can derive
+
+04:33
+that the number of bytes in flight is equal to the bandwidth
+
+04:38
+times the mean latency.
+
+04:40
+Now, bandwidth and latency are determined by hardware,
+
+04:43
+of course, but the number of bytes in flight is something
+
+04:47
+we can control through software.
+
+04:50
+So, if we want to maximize the bandwidth utilization for our GPU,
+
+04:55
+Little's Law essentially tells us how many bytes in flight we need.
+
+05:00
+Now, the plot on the right experimentally derives this
+
+05:04
+number for our latest GPUs.
+
+05:06
+We have two Hopper GPUs and our Blackwell GPU.
+
+05:10
+And as you can see, for the Hopper GPUs, we need around
+
+05:14
+32 kilobytes in flight to achieve above 90% bandwidth.
+
+05:22
+And for Hopper, we need around 64 kilobytes for maximum bandwidth.
+
+05:28
+For Blackwell, sorry.
+
+05:29
+But for Blackwell, you can see that anything above 40
+
+05:32
+kilobytes will give you a very good utilization of your DRAM bandwidth.
+
+05:40
+Now, the issue is that, as we saw earlier, the
+
+05:46
+bandwidth per SEM increases with every new generation.
+
+05:50
+So what this means is that, essentially, we
+
+05:53
+might need to adjust our kernels to take advantage
+
+05:56
+of the available bandwidth.
+
+06:02
+So let's go through a couple of simple CUDA kernels and see
+
+06:06
+what their bandwidth utilization is for multiple generations of GPUs.
+
+06:11
+So here we have a very simple vector add for which we can
+
+06:15
+estimate the number of bytes in flights by using this formula.
+
+06:19
+So we multiply the number of loads per thread, which is
+
+06:22
+two in this case, one for A and one for B. The number of bytes per load
+
+06:27
+is four since we are using floats.
+
+06:29
+And then the number of threads per block That's what we have
+
+06:31
+defined for this.
+
+06:34
+The number of blocks per SM depends on the occupancy of
+
+06:38
+our kernel, which is 100%, so 8 in this case, right?
+
+06:42
+So this gives us an estimated bytes in flight per SM of 16 KB bytes.
+
+06:48
+So as you can see on the plot on the right, even though the
+
+06:52
+bandwidth utilization does increase for every new generation in
+
+06:56
+absolute numbers, The percentage of peak actually has a downward trend.
+
+07:03
+Now, if I have a slightly different kernel that adds
+
+07:07
+three vectors instead of two, this essentially increases
+
+07:10
+my bytes and flights from 16 to 24.
+
+07:14
+And as you can see on the plot on the right, this improves
+
+07:18
+the bandwidth utilization for our NeuroGPUs.
+
+07:22
+Similarly, the more bytes and flights we have, the
+
+07:25
+better the utilization.
+
+07:28
+Now nonetheless, the main observation here is that for
+
+07:32
+these very simple kernels, we don't have enough bytes
+
+07:36
+and flights to saturate bandwidth on the latest GPUs.
+
+07:41
+So this means that we have performance left on the table.
+
+07:46
+So what tools do we have at our disposal to actually increase bytes
+
+07:50
+and flights and get closer to peak performance, to speed of light?
+
+07:56
+One way is to try and issue more independent memory operations,
+
+07:59
+so essentially increase ILP.
+
+08:02
+A second way is to use vectorized memory accesses.
+
+08:06
+And finally, the third way is to use asynchronous data copies.
+
+08:13
+Now let's look at increasing ILP through loop unrolling.
+
+08:17
+Here we have a very simple kernel again, which has a grid-stride
+
+08:21
+loop and essentially does element-wise vector multiplication.
+
+08:27
+So by default, this kernel only has two loads in flights.
+
+08:33
+We are using float, so essentially here we have eight bytes in
+
+08:36
+flight per thread.
+
+08:38
+Now, if we simply use a pragma unroll2, to unroll our loop
+
+08:45
+by a factor of two, we see that the number of loads in flight
+
+08:49
+increases to four, and the bytes in flight per thread increases to 16.
+
+08:55
+However, loop unrolling doesn't always work as expected.
+
+09:00
+So here you can see that I slightly modified the example,
+
+09:02
+and the compiler here doesn't actually pack all of these six
+
+09:07
+loads together at the beginning.
+
+09:10
+Now, the reason for this in this particular case is because
+
+09:12
+the compiler cannot safely assume that the two indices
+
+09:17
+do not overlap, right?
+
+09:18
+And that's why one of the loads is after the first store.
+
+09:25
+However, we know that these indices don't overlap, so in this case,
+
+09:30
+we can manually unroll our kernel to get the performance we want.
+
+09:38
+Now the second technique I mentioned was to use vectorized
+
+09:41
+memory operations.
+
+09:44
+Now vectorized memory operations allow us essentially to fetch
+
+09:47
+more data with less instruction.
+
+09:50
+So for example, if I'm using a simple float, here I can
+
+09:54
+fetch one cache line using a single instruction.
+
+09:57
+If instead I switch to float2, with a single instruction
+
+10:01
+I can fetch two cache lines and with a float4, four.
+
+10:05
+So there are two main ways to use to enable vectorization
+
+10:09
+in our CUDA kernels.
+
+10:11
+One is to use the native vector data types we have, and the
+
+10:15
+other is to cast our pointers.
+
+10:17
+So here, I've adjusted the previous example to use float2
+
+10:21
+instead of float, and as you can see, the only thing I've
+
+10:25
+changed is that the number of loop iterations is halved, and I do two
+
+10:30
+operations per loop instead of one.
+
+10:35
+Now, these techniques are very effective in increasing
+
+10:39
+the bandwidth utilization, as you can see here, especially
+
+10:41
+for Hopper and Blackwell, where we need more bytes-in-flight.
+
+10:46
+But the problem with these techniques is that they do
+
+10:49
+so at the cost of increased register usage, right?
+
+10:54
+So, essentially, bytes-in-flight need to be backed by registers
+
+10:57
+with these techniques.
+
+11:01
+And as you can see on the plot on the right,
+
+11:05
+For Hopper, for example, if we want to achieve more than
+
+11:08
+90% bandwidth utilization, we need more than 30% of the register file.
+
+11:15
+And for Blackwell, it's even worse.
+
+11:17
+We need around 40%.
+
+11:19
+So this doesn't leave us a lot of registers for compute, right?
+
+11:24
+If we are using 40% just to increase bytes and
+
+11:27
+flights, there is not that much left for our kernels.
+
+11:30
+So depending on what our kernel does,
+
+11:33
+This might be a problem or not.
+
+11:35
+So if it's a low computational intensity kernel, then probably
+
+11:39
+it can afford to use registers to back bytes in flight.
+
+11:44
+But for compute-heavy kernels, this is usually not the case.
+
+11:49
+And using registers to increase bytes in flight will probably
+
+11:53
+reduce our occupancy and lead to register spilling.
+
+11:58
+And this is where asynchronous data copies come into play.
+
+12:01
+So with asynchronous data copies, we can skip registers
+
+12:06
+and go directly to shared memory.
+
+12:09
+And what this means is that we can use shared memory as
+
+12:12
+a staging buffer for our data.
+
+12:16
+Especially if a CUDA kernel is not already using shared
+
+12:19
+memory, then it can now leverage it to increase bytes in flight.
+
+12:25
+Now, to get a better understanding of how asynchronous copies
+
+12:28
+work, let me go through an example of what happens when
+
+12:32
+we load data from global memory to shared memory in both cases.
+
+12:38
+Now, for asynchronous copy on the left, we see that the
+
+12:42
+data travels from global memory to the register file right
+
+12:46
+through the cache hierarchy.
+
+12:49
+And then what happens is that there is an implicit wait
+
+12:52
+on the scoreboard, which incurs a long scoreboard stall.
+
+12:56
+And when the data is actually fetched and registered, then
+
+13:00
+we store it in shared memory.
+
+13:03
+Now, if we switch to asynchronous copies, essentially what happens is
+
+13:08
+that the data travels directly from global memory to shared memory.
+
+13:14
+Then the copy is committed to the scoreboard and we explicitly
+
+13:17
+wait on the scoreboard for the data transfer to be complete.
+
+13:25
+Now, because the data copies are asynchronous, this also
+
+13:29
+allows us to overlap memory transfers with compute, and
+
+13:33
+essentially we can implement techniques such as data prefetching
+
+13:37
+to increase bytes and flights.
+
+13:40
+Another thing we can do is also use a producer-consumer
+
+13:44
+pattern in which case we might use a subset of threads to
+
+13:50
+do the data transfers and then another subset to consume the data.
+
+13:56
+Now the question that may arise at this point is that when
+
+14:01
+and how to adapt my CUDA kernel to use asynchronous memory copies.
+
+14:06
+If for example I have a CUDA kernel that employs the typical
+
+14:11
+pattern of reading data from global to shared memory, performing
+
+14:15
+computations in shared memory and then writing back the
+
+14:18
+The result, then if I simply
+
+14:21
+If, on the other hand, I have an iterative kernel, where
+
+14:23
+there is opportunity to prefetch data for future iterations, then
+
+14:26
+the benefits can be significant.
+
+14:44
+So there are two main mechanisms
+
+14:49
+to do asynchronous copies in CUDA.
+
+14:51
+One was introduced with Ampere, and it's called LDGSTS.
+
+14:55
+And the other one was introduced in Hopper, and it's the Tensor
+
+14:59
+Memory Accelerator, or TMA.
+
+15:02
+Now this table shows the different data paths that are supported
+
+15:07
+for the different techniques and it also shows the completion
+
+15:11
+mechanism that is required to synchronize for the data.
+
+15:17
+Now let's start with LDGSTS.
+
+15:22
+So LDGSTS essentially allows us to do a single copy from
+
+15:27
+global to shared memory of four, eight, or 16 bytes at a time.
+
+15:33
+It also has two modes of operation.
+
+15:35
+One is L1 bypass, which...
+
+15:41
+Which bypasses the L1 and can be used when the size and
+
+15:46
+alignment of the data is 16 bytes.
+
+15:51
+The other mode is called L1 access and is used when the
+
+15:55
+size of the data type and the alignment is 4 or 8 bytes.
+
+16:00
+For most GPUs, the compiler will try to use the L1
+
+16:04
+bypass mode if it can.
+
+16:07
+Now, for LDGSTS, we have three APIs, actually.
+
+16:14
+One is the primitives API, the other is in the libcuda.cxx
+
+16:19
+library, and the other is in the cooperative groups API.
+
+16:24
+So the Cooperative Groups API is a bit more high level.
+
+16:30
+It is good mostly when we are doing larger copies, but in general,
+
+16:35
+it doesn't give us a lot of control in terms of synchronizing
+
+16:40
+and so on and so forth.
+
+16:41
+So in general, we recommend people use the Primitives
+
+16:45
+API or the libcuda-cxx API.
+
+16:50
+Now let's look at an example of switching from synchronous
+
+16:54
+to asynchronous copies.
+
+16:56
+So on the left, we have our usual grid stride vector
+
+16:59
+type kernel, okay?
+
+17:02
+And to adapt this to use asynchronous copies, what
+
+17:06
+we need to do essentially is define our shared memory buffers, right?
+
+17:10
+One for A and one for B in this case.
+
+17:12
+And then inside our grid stride loop, we need to first fire
+
+17:16
+the asynchronous copies.
+
+17:18
+One per thread, in this case, using pipeline memcpy async.
+
+17:24
+And then we need to use pipeline commit, which essentially
+
+17:28
+associates a barrier with the previous memcopies.
+
+17:34
+Then we need to wait for the data using pipeline-wait-prior.
+
+17:39
+Now, pipeline-wait-prior takes an argument N, which essentially
+
+17:44
+means wait for all data transfers except the last N. So in this
+
+17:50
+case, since we want to wait for all of the data, right, we use zero.
+
+17:55
+So after we are done waiting, we can compute as usual, but instead
+
+18:00
+of using global memory pointers, we use our data from shared memory.
+
+18:08
+Now, the previous example was using the primitives API.
+
+18:11
+If we want to do the same thing with the libcuda-cxx
+
+18:14
+API, we need to explicitly define a shared memory barrier, in this
+
+18:22
+case, with a thread scope block.
+
+18:27
+Initialize that barrier.
+
+18:28
+In this case, we initialize it with the thread lock dimension
+
+18:34
+because all threads are going to arrive on that barrier.
+
+18:39
+And then the grid-strand loop is pretty similar.
+
+18:43
+We launch again our async copies using CUDA memcopy async.
+
+18:49
+But here the difference is that CUDA memcopy async also
+
+18:52
+takes the barrier as an argument.
+
+18:54
+This is how we associate the memcopy with a
+
+18:57
+barrier in this case.
+
+18:59
+Then again we wait on the barrier for the data to arrive
+
+19:03
+and continue with our computation.
+
+19:06
+Now, um...
+
+19:08
+CUDA MemCopy async is a bit more flexible than the
+
+19:12
+primitives API because it also supports larger sizes.
+
+19:16
+So essentially it handles the copies under the hood
+
+19:19
+if you do check your copies.
+
+19:23
+Also, a very important point to help the compiler optimize
+
+19:27
+is to use the CUDA-aligned-size-t construct to essentially inform
+
+19:32
+the compiler that your data type and your alignment is 8, 4,
+
+19:39
+or 16 bytes, if that is the case.
+
+19:46
+Now, let's try and do something more useful with asynchronous
+
+19:49
+data copies, which, as I mentioned earlier, is to prefetch data
+
+19:53
+to increase bytes in flight.
+
+19:55
+In this example, we are going to use, I think, the simplest
+
+19:58
+way to do this, which is using the CUDA pipeline construct.
+
+20:02
+So the first step is to create our pipeline.
+
+20:06
+This is a thread-local pipeline.
+
+20:10
+And then we need to acquire a stage in the pipeline, launch
+
+20:15
+the asynchronous copies, and then commit those.
+
+20:22
+Now, an important detail to, again, be able to generate
+
+20:27
+more efficient code is to always commit in non-divergent code.
+
+20:34
+This is the case because the commit is a warp-level instruction,
+
+20:39
+so if there is warp divergence, essentially we will get one
+
+20:43
+commit for each conditional path.
+
+20:49
+Now, our main loop...
+
+20:54
+First, we want to prefetch data for our next iteration.
+
+20:59
+So again, we fetch a new stage from the pipeline, launch
+
+21:03
+our async copies, and commit them.
+
+21:05
+But then we want to wait for the data copies from the earlier stage.
+
+21:11
+So in this case, we only have two stages.
+
+21:13
+So we're going to use consumer wait prior with an argument
+
+21:18
+of one to wait for all except The last batch of copies.
+
+21:24
+So when we're done waiting, again, we can compute from
+
+21:26
+the current stage and then we need to release it, right?
+
+21:33
+Now, we can take this, of course, one step further, and instead of
+
+21:38
+using a prefetch distance of once, we can essentially increase the
+
+21:41
+prefetch distance and do what we call multi-stage data prefetching.
+
+21:46
+So the main thing that changes here is that we have a number
+
+21:50
+of stages, which should ideally be a compile-time constant,
+
+21:55
+right, to, again, lead to more efficient code generation.
+
+22:00
+And instead of loading only one stage, right, we fill
+
+22:04
+our entire pipeline.
+
+22:08
+And then the main loop is quite similar.
+
+22:12
+We wait for only the oldest stage in this case.
+
+22:15
+This is the main difference.
+
+22:17
+So consume wait prior has a different argument here.
+
+22:21
+But then again, we compute, we release, and then we prefetch
+
+22:24
+data for num stages ahead.
+
+22:31
+Now, with LDG SDS, as I mentioned earlier, there
+
+22:36
+is an L1 bypass mode.
+
+22:39
+So if your data is 16 bytes aligned, then it
+
+22:46
+is usually more efficient to use the L1 Bipass mold.
+
+22:50
+So, in this particular example, where we were simply loading
+
+22:53
+one float per thread, in order to adapt it to enable L1 bypass,
+
+22:59
+essentially we need to use less threads and have each
+
+23:02
+thread do a wider load, right?
+
+23:04
+So, instead of each thread doing a single four byte load, we will
+
+23:08
+have less threads doing six byte loads, so four floats in this case.
+
+23:16
+So essentially here we have a producer-consumer pattern, right?
+
+23:20
+Because we will have only a subset of threads launching the
+
+23:23
+copies, but then all of them using the data to do the computation.
+
+23:32
+Now, an important detail here is that because we are using
+
+23:36
+a producer-consumer pattern, we need to synchronize before we start
+
+23:41
+our computation because a different set of threads is fetching
+
+23:45
+the data that we want to use.
+
+23:52
+Now, a question that may arise is, how many stages
+
+23:57
+do I actually need, right?
+
+23:59
+And the answer to this question is given by our formula,
+
+24:05
+essentially, that computes the number of bytes in flight.
+
+24:08
+So in this particular case, right, we have four parameters that
+
+24:15
+are fixed and one that is tunable.
+
+24:18
+So the number of bytes in flight per SM is fixed, right,
+
+24:21
+because it depends on the GPU we are optimizing for.
+
+24:25
+If it's Hopper, for example, we saw earlier that if we
+
+24:28
+get more than 32 kilobytes in flight, we should be able
+
+24:33
+to achieve a good utilization.
+
+24:35
+And anything higher than 40 for Blackwell should again be fine.
+
+24:40
+Then the number of blocks per ISM also depends on the occupancy
+
+24:43
+of our kernel, so it's fixed.
+
+24:46
+The number of threads per block as well.
+
+24:48
+The number of bytes per load is also fixed.
+
+24:51
+And what is tunable is the number of threads, loads per
+
+24:54
+thread, which depends on the number of stages, right?
+
+24:58
+So if we solve this equation, it tells us essentially that
+
+25:02
+for Hopper we need two stages, and for BlackBull we need three.
+
+25:08
+And let's actually look at some results.
+
+25:12
+So here, this is the kernel I showed earlier, the multistage
+
+25:16
+data refetching kernel, where I set the compute function
+
+25:20
+to a simple multiplication.
+
+25:23
+So as you can see, indeed, for Hopper, two stages gives
+
+25:28
+the best the best performance, and an overall uplift of
+
+25:31
+around six percent.
+
+25:34
+Now if I actually, oh sorry, here I have the outputs of Nsight
+
+25:41
+Compute and in particular the warp state statistics to show you that
+
+25:48
+essentially the long scoreboard stalls are greatly reduced, right,
+
+25:53
+by doing the data prefetching.
+
+25:57
+Now, if I change the compute function to do something more
+
+26:00
+complicated, we see that, again, the number of optimal, the optimal
+
+26:06
+number of stages for Hopper is two.
+
+26:09
+But in this case, the uplift in performance is actually
+
+26:12
+significant, it's 30%.
+
+26:17
+And you can see again here that the log score, the log
+
+26:20
+score word stalls almost disappear.
+
+26:27
+The difference with this example is that we actually have a
+
+26:29
+longer compute phase and we can use that longer compute phase to hide
+
+26:31
+the latency of the data transfers.
+
+26:31
+As long as we have a kernel that suffers from long scoreboard
+
+26:33
+stalls, which we can identify and inside compute, using
+
+26:34
+this technique should be effective and should have a significant
+
+26:35
+NVIDIA is the first company in the United States that
+
+26:36
+has developed its own memory card.
+
+26:37
+NVIDIA is the first company in the United States that
+
+26:38
+has developed its own memory card.
+
+26:39
+NVIDIA is the first company in the United States that
+
+26:40
+has developed its own memory card.
+
+26:41
+NVIDIA is the first company in the United States that
+
+26:42
+has developed its own memory card.
+
+26:43
+NVIDIA is the first company in the United States that
+
+26:44
+has developed its own memory card.
+
+26:45
+NVIDIA is the first company in the United States that
+
+26:46
+has developed its own memory card.
+
+26:47
+NVIDIA is the first company in the United States that
+
+26:48
+has developed its own memory card.
+
+26:48
+NVIDIA is the first company in the United States that
+
+26:50
+has developed its own memory card.
+
+26:50
+NVIDIA is the first company in the United States that
+
+26:52
+has developed its own memory card.
+
+26:53
+NVIDIA is the first company in the United
+
+26:57
+Now, let's look at our second mechanism to do asynchronous
+
+27:02
+data copies, which is using the Tensor Memory Accelerator,
+
+27:05
+which was introduced in Hopper.
+
+27:08
+So, TMA is an efficient mechanism to do bulk copies.
+
+27:14
+There are two programming models, one for one-dimensional
+
+27:17
+contiguous arrays, which I will refer to as TMA1D, and
+
+27:22
+one for multi-dimensional arrays, which I will refer to as TMA-ND.
+
+27:27
+So TMA-ND was covered extensively in last year's session, Advanced
+
+27:32
+Performance Optimization in CUDA, so it will not be the
+
+27:35
+focus of this presentation.
+
+27:38
+Now, the TMA programming model is warp uniform, which means
+
+27:44
+that it's more efficient, right, to fire TMA operations
+
+27:48
+from a single thread per warp.
+
+27:51
+If we don't, and there are more active threads per warp,
+
+27:54
+then the compiler will essentially generate a peeling loop, okay,
+
+27:58
+for each active thread.
+
+28:02
+So let's look at TMA1D.
+
+28:05
+The completion mechanism for TMA1D is a shared memory barrier,
+
+28:10
+and the alignment requirements are a bit stricter compared to LDG SDS.
+
+28:15
+So here both source and destination pointers need to be 16 bytes
+
+28:20
+aligned, and the size of the data we want to copy also
+
+28:25
+needs to be a multiple of 16 bytes.
+
+28:29
+Now, the APIs available for TMA1D are all in libcuda-cxx.
+
+28:36
+One option is to use CUDA memcpy-async combined
+
+28:40
+with CUDA barrier.
+
+28:42
+Another option is to use CUDA device memcpy-async-tx, again
+
+28:48
+with a CUDA barrier.
+
+28:50
+And another option is to use the PTX through the CUDA PTX namespace.
+
+28:59
+TMA, however, is also enabled in some of our libraries,
+
+29:02
+including Thrust.
+
+29:04
+So, for people that are using Thrust, Thrust Transform
+
+29:09
+actually uses TMA under the hood when possible.
+
+29:12
+So, essentially, you can get TMA for free.
+
+29:18
+Now let's look at the data path from global memory to
+
+29:23
+shared memory using TMA1D.
+
+29:27
+So we have three main phases.
+
+29:30
+One is the initialization phase, where we need to define
+
+29:34
+our completion mechanism, which is the shared memory barrier.
+
+29:37
+Again, we need to initialize it.
+
+29:43
+With a number of threads in the block in this case.
+
+29:46
+And then, in the second phase, which I call the fire phase,
+
+29:50
+is essentially how we launch asynchronous copies.
+
+29:54
+So the main difference here, compared to LDG SDS, is that
+
+29:58
+only one thread launches the copy.
+
+30:01
+UBLKCP, NVIDIA, CCCL.
+
+30:02
+UBLKCP, NVIDIA, CCCL.
+
+30:05
+And then, each thread receives a token, which it then uses
+
+30:11
+to wait on the barrier.
+
+30:15
+So, the good thing with CUDA memcpy async is that even if
+
+30:24
+the alignment requirements are not met, there is a fallback mechanism.
+
+30:30
+But this is not the case, for example, with the
+
+30:33
+other API I mentioned, CUDA Device Memcpy Async Tx.
+
+30:37
+So with this API, if you don't fulfill the alignment and data
+
+30:42
+size requirements, then essentially you have undefined behavior.
+
+30:46
+And of course, it only works on Hopper+.
+
+30:49
+So in general, it's safer to use CUDA Memcpy Async.
+
+30:56
+Now, the PTX API is similar, right, we are doing the same things,
+
+31:01
+it's just slightly different naming, but the main difference
+
+31:06
+with the PTX version is that it actually gives you finer-grained
+
+31:10
+control regarding synchronization, so here, for example,
+
+31:23
+Using the PTX API, we can only, for example, have one
+
+31:27
+thread arrive on the barrier, inform the barrier how many bytes
+
+31:34
+it should be expecting to transfer.
+
+31:36
+And then, instead of having a barrier.wait, which is more
+
+31:40
+expensive, we can have our loops simply spinning on the
+
+31:46
+barrier, waiting for the data transfer to complete.
+
+31:52
+So threads essentially in this case can only wait, only
+
+31:56
+need to wait for the data arrival, not actually for other threads.
+
+32:00
+So this is actually faster.
+
+32:05
+Now, I mentioned earlier that we should always launch TMA operations
+
+32:12
+from a single thread, but the thing is that the compiler does not
+
+32:18
+actually know that this condition is true only for one thread.
+
+32:22
+So if you actually look at the code that is generated in this
+
+32:26
+case, you will see that still the compiler generates a peeling loop.
+
+32:31
+So to avoid this, you can use the invoke one function
+
+32:36
+from the cooperative groups API, which essentially hints
+
+32:40
+the compiler that only one thread will be doing the TMA operation.
+
+32:49
+Now, if I take the same example as before, and instead of
+
+32:53
+using LDG SDS, I use TMA to do the asynchronous copies,
+
+32:58
+you see that it is quite similar.
+
+33:00
+Again, we define a shared memory barrier, we initialize it, and then
+
+33:06
+in our grid-stride loop, we launch our copies, wait, and compute.
+
+33:10
+The main difference is that instead we use only one thread
+
+33:13
+to launch the copies.
+
+33:14
+Yeah.
+
+33:19
+So, in this particular case, right, so this is a pattern
+
+33:23
+that actually I can implement with ThrustTransform.
+
+33:27
+So, if we use ThrustTransform in this case, right, to write
+
+33:34
+our kernel, we essentially get TMA for free.
+
+33:40
+So the only important detail here to enable TMA is to use this
+
+33:44
+CUDA-proclaimed copyable argument, which essentially informs the
+
+33:48
+library, informs Thrust, that data can be copied to shared memory.
+
+33:54
+So, if you do this, essentially, you get TMA under the hood
+
+33:58
+by thrust for free.
+
+34:01
+And the other cool thing thrust transform will do for you
+
+34:05
+is it will tune the number it will tune essentially the
+
+34:09
+kernel to maximize the number of bytes in flight, right?
+
+34:12
+Which is what we are trying to do.
+
+34:19
+Right, so again if we want to do data prefetching with
+
+34:22
+TMA the main difference compared to LDGSTS is that here we can't
+
+34:28
+use the CUDA pipeline construct and we explicitly need to use
+
+34:32
+shared memory barriers to do it.
+
+34:35
+So if we have two stages, for example here we have two
+
+34:38
+stages, we need to use two shared memory barriers to
+
+34:42
+track the memory copies.
+
+34:46
+Other than that, there's not a huge difference, right?
+
+34:52
+Now, here we have an overview, right, of the different
+
+34:57
+techniques we have with their alignment constraints
+
+35:01
+and their added benefits.
+
+35:03
+So, as you can see, TMA-ND, for example, which I didn't really talk
+
+35:07
+about, it has stricter alignments requirements compared to TMA-1D
+
+35:12
+and LDGSTS, But it also has extra
+
+35:18
+So it can also, for example, handle out-of-bounds accesses
+
+35:21
+for us and it can also do shared memory swizzling to
+
+35:27
+resolve bank conflicts.
+
+35:30
+So in general, if we can adhere to the alignment and size
+
+35:36
+requirements, it's better to use the more sophisticated method.
+
+35:44
+Now, here I'm going to try and give a general optimization
+
+35:47
+guideline on how to increase bytes in flight for our CUDA kernels.
+
+35:51
+So the first question we always need to ask is, do we already
+
+35:55
+have enough bytes in flight?
+
+35:57
+If we do, essentially we don't need to do anything, right?
+
+36:01
+If we don't, however, then the next question we should
+
+36:04
+ask ourselves is, can we prefetch data in our kernel?
+
+36:11
+If we can't prefetch data in our kernel, then we need to think
+
+36:14
+where can we prefetch the data.
+
+36:17
+If we can afford to use registers, right, and we're not limited
+
+36:20
+by register pressure, then we can simply try to use unrolling
+
+36:25
+or vectorization.
+
+36:27
+If, however, we can't afford to use registers to back the
+
+36:30
+number of bytes in flight, then we should try and use
+
+36:33
+shared memory if it's available.
+
+36:36
+Now, in that case, what we need to think about next is
+
+36:41
+the alignment requirements, right?
+
+36:43
+So, if we have four or eight byte alignments, we can use LDGSTS.
+
+36:51
+But if we have 16 byte alignment, we have more options.
+
+36:55
+We can use either TMA or LDGSTS.
+
+36:59
+And then the final question is how to choose between LDGSTS and TMA,
+
+37:04
+which depends on the size of the chunk of data we want to transfer.
+
+37:10
+So for TMA, ideally we want to be transferring data chunks
+
+37:18
+of more than two kilobytes.
+
+37:20
+For LDGSTS, less than one kilobyte, and if our chunk
+
+37:25
+of data is somewhere in between, essentially we should experiment
+
+37:29
+with both and see what is best.
+
+37:33
+Now, the key takeaways from this part of the presentation is that
+
+37:39
+essentially the latest GPUs have more bandwidth available per SM.
+
+37:45
+So if our CUDA kernels do not have enough bytes in flight, essentially
+
+37:49
+they can't saturate the memory bandwidth, which means that there
+
+37:53
+is performance left on the table.
+
+37:57
+So CUDA provides asynchronous data copy mechanisms, right,
+
+38:02
+to enable data prefetching to increase bytes in flight.
+
+38:05
+One is LDGSTS and the other is TMA.
+
+38:09
+Of course, writing kernels using these features is more
+
+38:12
+complicated, but hopefully after our presentation it's much simpler.
+
+38:19
+And of course, in some cases, we can get these features for
+
+38:24
+free using libraries such as Thrust or Cutlass and so on and so forth.
+
+38:32
+So now I'm going to hand over to my colleague Allert to
+
+38:35
+talk about the memory model.
+
+38:45
+Yeah, thank you, Athena, for some great advice on maximizing
+
+38:49
+memory throughput, bandwidth.
+
+38:51
+Now we're going to focus on latency, and before we focus
+
+38:54
+on latency, we're going to discuss the memory model.
+
+38:59
+And the memory model is essential.
+
+39:03
+Understanding of the memory model is essential to synchronize
+
+39:07
+between threads in a parallel system and the latency which
+
+39:11
+we're going to try to reduce.
+
+39:13
+What is a memory model? A memory model gives guarantees.
+
+39:18
+It tells you what values a load can return from memory legally.
+
+39:25
+And it's a kind of contract.
+
+39:26
+It's a contract between the...
+
+39:30
+Hardware, or not just the hardware, but also the compiler
+
+39:34
+and the programming language.
+
+39:37
+And so all three interact to give you a memory model or a consistent
+
+39:42
+model of the machine that you can use to interact while programming.
+
+39:47
+And we're going to discuss four topics.
+
+39:50
+The first topic, single-threaded memory model, looks very simple.
+
+39:57
+But because we're going to break some promises in the topics to
+
+40:01
+the right, we're going to discuss it first to lay some groundwork.
+
+40:05
+Then the multi-threaded programming model was introduced in Volta
+
+40:09
+when the C++ memory model was added to CUDA.
+
+40:12
+And then async threads were added in Ampere, for instance, with
+
+40:15
+the LDG SDS copy async instruction.
+
+40:19
+The async proxy is actually used for the uBlock copy
+
+40:23
+TMA instructions that we've already seen.
+
+40:26
+So it's essential to understand them.
+
+40:29
+Let's dive in.
+
+40:32
+So a single-threaded memory model is very simple.
+
+40:37
+You've probably used it before.
+
+40:39
+You store something to a memory location and you load it,
+
+40:43
+and you load the value from the memory location.
+
+40:45
+You expect to have the same value back, right?
+
+40:48
+So here, we're loading a value of 42 to the memory location
+
+40:54
+val somewhere in global memory.
+
+40:56
+And it goes down a pipe, let's call it a path.
+
+41:00
+And immediately after we put this store out into the path,
+
+41:06
+the load also goes out into the memory subsystem.
+
+41:10
+And these two things, they stay in order.
+
+41:14
+They stay in order throughout the entire memory subsystem.
+
+41:17
+And now we see that we've stored the value and the load comes after.
+
+41:21
+It loads that value and brings it back to the thread.
+
+41:26
+And we call this behavior same address ordering.
+
+41:29
+You need this behavior.
+
+41:30
+It will give you sanity.
+
+41:36
+So, do we always have this behavior?
+
+41:39
+Well, no, we don't.
+
+41:42
+In CUDA, we have something called the constant caches.
+
+41:45
+They sit somewhere in the SM.
+
+41:48
+They're not connected to the L1 cache that normal loads
+
+41:51
+and stores go through.
+
+41:53
+And it's not kept coherent with these L1 caches or other caches.
+
+41:59
+If you do a load and store, there's no communication.
+
+42:02
+Nothing keeps these caches in sync.
+
+42:04
+And so what happens, if you have, again, a single thread
+
+42:08
+that stores a value and then tries to load it again, but
+
+42:11
+this time to a constant cached value, the following will happen.
+
+42:17
+You will try, this is, you have to.
+
+42:22
+You force the compiler to do this, there's some code
+
+42:25
+that's made transparent that tricks the compiler
+
+42:31
+into allowing you to do this.
+
+42:33
+But what happens is you do the store.
+
+42:36
+It goes into the memory subsystem, it goes past
+
+42:41
+L1, it updates a value in L2.
+
+42:44
+The load doesn't go down the same path, but goes
+
+42:48
+into the constant cache.
+
+42:49
+And there, it loads a stale value.
+
+42:53
+And the stale value is brought back to the SM, and we have an error.
+
+42:59
+But nobody expects this code to work, but I just want you
+
+43:03
+to kind of get a feeling for
+
+43:06
+Same address ordering, not holding everywhere.
+
+43:08
+We'll get back to this.
+
+43:10
+So before we get back to this, let's discuss the
+
+43:14
+Volta C++ memory model.
+
+43:17
+And what's very important to understand with the memory
+
+43:21
+model with multiple threads operating in parallel is order.
+
+43:25
+Which things comes first, which thing comes later.
+
+43:29
+And we have four important memory orders in a parallel system.
+
+43:34
+One of them is sequentially consistent, and it's
+
+43:37
+basically the strongest.
+
+43:41
+Memory order.
+
+43:43
+And what that means is, suppose we have this atomic integer
+
+43:49
+A, and we load from it.
+
+43:54
+And we have a load before and a load after.
+
+43:56
+They're not to the same address, so they could be reordered.
+
+43:59
+However, with memory order sequentially consistent, we say
+
+44:03
+that the load before and the load after, they cannot be moved around.
+
+44:06
+They have to, the one before has to stay before, the one
+
+44:10
+after has to stay after.
+
+44:13
+And sequentially consistent is kind of nice to use because
+
+44:18
+it keeps things where they are in your program, but it
+
+44:24
+can be a bit slow for hardware.
+
+44:25
+So we're not gonna discuss it much anymore.
+
+44:30
+The next one,
+
+44:34
+And acquire basically says any load or store after the atomic
+
+44:41
+acquire operation stays after.
+
+44:43
+So if somebody else in the system updated memory and
+
+44:49
+You want to get that state, you want to get that consistent
+
+44:51
+view of memory, you use acquire.
+
+44:53
+So it's used in the consumer side of things.
+
+44:57
+And it allows prior loads to move after, but subsequent
+
+45:02
+loads doesn't allow it to move up.
+
+45:05
+And then for release,
+
+45:08
+for release, yeah.
+
+45:11
+It's the reverse.
+
+45:13
+This is a way to release state to the memory subsystem for
+
+45:18
+other threads to consume.
+
+45:19
+So any load or store before the release stays before,
+
+45:24
+but some of the loads or stores after can move up.
+
+45:31
+Finally, we have relaxed.
+
+45:34
+And relaxed basically, oh wait, sorry.
+
+45:39
+Relaxed allows any ordering, right?
+
+45:42
+So both loads could be before the relaxed memory operation
+
+45:47
+and both loads could be after or in any order.
+
+45:51
+They wouldn't flip between themselves because they're
+
+45:53
+to the same address.
+
+45:54
+So within a single thread, same address ordering still applies
+
+45:58
+also for relaxed memory orders.
+
+46:03
+All right, so then compared to a CPU, CUDA threads are
+
+46:08
+a bit more special because we have a hierarchy and this hierarchy
+
+46:15
+means that with Atomics we can improve performance by making
+
+46:19
+use of that CUDA thread hierarchy.
+
+46:22
+And so we have a ThreadScope thread that you've seen before
+
+46:27
+in the CUDA pipeline example.
+
+46:30
+It was scoped to a thread, so it only governed the loads
+
+46:35
+and stores of a single thread.
+
+46:38
+We, of course, have ThreadScope block, which is used for CUDA
+
+46:41
+thread blocks, and we have ThreadScope device, which is for
+
+46:47
+all threads on a GPU, whether in the same grid or in different grids
+
+46:53
+when they want to communicate data.
+
+46:55
+Finally, we have ThreadScope System, which includes any
+
+47:00
+thread in the NVL-connected domain.
+
+47:03
+So here for this GV200 NVL72 system, if there's a thread
+
+47:09
+somewhere in the lower left corner of this rack and some
+
+47:12
+other thread on the top right, they will be able to communicate
+
+47:16
+using ThreadScope System.
+
+47:18
+And it also applies to threads on the CPU and threads on the GPU.
+
+47:22
+So there's one big...
+
+47:25
+System.
+
+47:28
+Finally, we also have a CUDA-PTX
+
+47:33
+notion of scope, and there we don't have the notion of
+
+47:35
+a thread scope, but we have a notion of the thread scope cluster.
+
+47:40
+So that allows threads within a thread block cluster to
+
+47:43
+communicate with each other.
+
+47:47
+So let's get a feel for the performance.
+
+47:50
+How do these scopes relate to the GPU memory hierarchy?
+
+47:56
+And one important thing to understand is that each scope has
+
+48:01
+an associated point of coherence.
+
+48:03
+And that's kind of the point in the memory hierarchy, the cache
+
+48:07
+where we want to have a consistent view for all threads in the scope.
+
+48:13
+And for threads in a thread block, they'll execute on the same SM.
+
+48:19
+And that makes that we can
+
+48:23
+make use of that behavior and ensure that the data only
+
+48:28
+has to be consistent in L1.
+
+48:30
+And that way, all the threads in the block have the same
+
+48:33
+view when working in parallel.
+
+48:38
+That also means that release and acquire operations are
+
+48:41
+pretty cheap, because we don't have to flush data very far, we don't
+
+48:44
+have to invalidate many caches.
+
+48:48
+However, when we go to ThreadScope cluster, there are multiple
+
+48:52
+threads across multiple SMs working together.
+
+48:57
+When they want to exchange data, they have to go through the L2.
+
+49:02
+And that means, in a release operation, they will want
+
+49:05
+to flush the L1 caches.
+
+49:08
+Wait, in a release operation, they will want to flush to
+
+49:11
+L2, and an acquire operation, they want to make sure that
+
+49:15
+the L1 is invalidated.
+
+49:20
+So here, Release and Acquire are a bit more expensive than
+
+49:26
+with a thread block, and we'll get back to this point in great detail.
+
+49:33
+Finally, if we have threads across the whole GPU, it's
+
+49:35
+almost as expensive or as cheap to synchronize threads
+
+49:40
+as it is in a thread block cluster.
+
+49:41
+The point of coherence is the L2, we have to invalidate
+
+49:44
+L1 cache, it's on Acquire, we have to flush the L2 on Release.
+
+49:49
+With ThreadScope's system, we also have to flush the
+
+49:55
+O2, but we can have threads across the whole system.
+
+49:59
+So for a release operation, we actually have to make sure all
+
+50:03
+the stores made it to the relevant caches on other nodes, other
+
+50:06
+GPUs across the whole connected system and on Acquire, still pretty
+
+50:11
+cheap, it's just an L1 invalidate.
+
+50:18
+So let's look at a few examples.
+
+50:22
+Here we have two threads inside one block and they
+
+50:26
+wanna communicate a value.
+
+50:28
+The value is initialized to minus one and we're gonna
+
+50:33
+use the CUDA normal C++ atomics to exchange some value.
+
+50:37
+And one possible execution, of course these threads execute in
+
+50:42
+parallel so there are many possible executions but one possible
+
+50:45
+execution is the following.
+
+50:48
+Thread 0 stores a value to val, and we have to note here,
+
+50:55
+they have two threads.
+
+50:56
+They're going to the same value, but there's no same
+
+50:59
+address ordering, because they're different threads.
+
+51:02
+Or there could be a different pass to the same piece of memory, right?
+
+51:09
+That's why we have the two gray lines here.
+
+51:12
+You know?.
+
+51:14
+
+

@@ -1,0 +1,590 @@
+cutalass 4.1
+
+include/cutlass/arch/memory.h : 全局内存的读取和存储
+
+include/cutlass/arch/mma_sm89.h: SM89 Tensor Core新增 FP8的mma
+
+async异步类的操作在cutlass的目录下是没有的
+
+arch路径下是不同架构调用PTX的封装，cute/cutlass都一样
+
+
+
+```
+include/cutlass/arch/mma.h
+		不同架构调用PTX的封装
+include/cutlass/gemm/warp/mma.h
+		对arch的warp级别封装
+include/cutlass/gemm/thread/mma.h
+		使用Cuda Core的封装
+
+
+```
+
+
+
+kernel模板
+
+```
+// include/cutlass/device_kernel.h
+/// Generic CUTLASS kernel template.
+template <typename Operator>
+CUTLASS_GLOBAL
+void Kernel(typename Operator::Params params) {
+  // Dynamic shared memory base pointer
+  extern __shared__ int SharedStorageBase[];
+  // Declare pointer to dynamic shared memory.
+  typename Operator::SharedStorage *shared_storage =
+      reinterpret_cast<typename Operator::SharedStorage *>(SharedStorageBase);
+
+  Operator op;
+
+  op(params, *shared_storage);
+  cutlass::arch::synclog_print();
+}
+```
+
+
+
+```
+  include/cutlass/gemm/device/gemm.h
+    
+  // 注意这里面using的是GemmKernel
+  /// Define the kernel
+  using GemmKernel = typename kernel::DefaultGemm<
+    ElementA,
+    LayoutA,
+    kAlignmentA,
+    ElementB,
+    LayoutB,
+    kAlignmentB,
+    ElementC,
+    LayoutC,
+    ElementAccumulator,
+    OperatorClass,
+    ArchTag,
+    ThreadblockShape,
+    WarpShape,
+    InstructionShape,
+    EpilogueOutputOp,
+    ThreadblockSwizzle,
+    kStages,
+    kSplitKSerial,
+    Operator,
+    SharedMemoryClearOption::kNone,
+    GatherA,
+    GatherB,
+    ScatterD,
+    PermuteDLayout
+  >::GemmKernel;
+```
+
+
+
+```
+  include/cutlass/gemm/device/gemm.h
+  
+  // 启动核函数
+  /// Runs the kernel using initialized state.
+  Status run(cudaStream_t stream = nullptr) {
+
+    ThreadblockSwizzle threadblock_swizzle;
+
+    dim3 grid = threadblock_swizzle.get_grid_shape(params_.grid_tiled_shape);
+    dim3 block(GemmKernel::kThreadCount, 1, 1);
+
+    cudaError_t result;
+
+    int smem_size = int(sizeof(typename GemmKernel::SharedStorage));
+
+    if (smem_size >= (48 << 10)) {
+      result = cudaFuncSetAttribute(Kernel<GemmKernel>,
+                                    cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                    smem_size);
+
+      if (result != cudaSuccess) {
+        return Status::kErrorInternal;
+      }
+    }
+
+    cutlass::arch::synclog_setup();
+    cutlass::Kernel<GemmKernel><<<grid, block, smem_size, stream>>>(params_);
+
+    result = cudaGetLastError();
+
+    return result == cudaSuccess ? Status::kSuccess : Status::kErrorInternal;
+  }
+  
+  /// Runs the kernel using initialized state.
+  Status operator()(cudaStream_t stream = nullptr) {
+    return run(stream);
+  }
+```
+
+
+
+```
+  // 这里面特化的是上面那个Gemm的模板, 如果是另一个的话，layout::RowMajor不需要指定
+  using UnderlyingOperator = Gemm< 
+    ElementB,
+    typename layout::LayoutTranspose<LayoutB>::type,
+    ElementA,
+    typename layout::LayoutTranspose<LayoutA>::type,
+    ElementC,
+    layout::RowMajor,    
+    ElementAccumulator,
+    OperatorClass,
+    ArchTag,
+    ThreadblockShape,
+    WarpShape,
+    InstructionShape,
+    EpilogueOutputOp,
+    ThreadblockSwizzle,
+    Stages,
+    kAlignmentB,
+    kAlignmentA,
+    SplitKSerial,
+    Operator,
+    GatherB,
+    GatherA,
+    ScatterD,
+    PermuteDLayout
+  >;
+```
+
+
+
+```
+include/cutlass/gemm/kernel/default_gemm.h
+
+原始模板
+template <
+    /// Element type for A matrix operand
+    typename ElementA_,
+    /// Layout type for A matrix operand
+    typename LayoutA_,
+    /// Access granularity of A matrix in units of elements
+    int kAlignmentA,
+    /// Element type for B matrix operand
+    typename ElementB_,
+    /// Layout type for B matrix operand
+    typename LayoutB_,
+    /// Access granularity of B matrix in units of elements
+    int kAlignmentB,
+    /// Element type for C and D matrix operands
+    typename ElementC_,
+    /// Layout type for C and D matrix operands
+    typename LayoutC_,
+    /// Element type for internal accumulation
+    typename ElementAccumulator,
+    /// Operator class tag
+    typename OperatorClass,
+    /// Tag indicating architecture to tune for
+    typename ArchTag,
+    /// Threadblock-level tile size (concept: GemmShape)
+    typename ThreadblockShape,
+    /// Warp-level tile size (concept: GemmShape)
+    typename WarpShape,
+    /// Warp-level tile size (concept: GemmShape)
+    typename InstructionShape,
+    /// Epilogue output operator
+    typename EpilogueOutputOp,
+    /// Threadblock-level swizzling operator
+    typename ThreadblockSwizzle,
+    /// Number of stages used in the pipelined mainloop
+    int Stages,
+    /// If true, kernel is configured to support serial reduction in the
+    /// epilogue
+    bool SplitKSerial,
+    /// Operation performed by GEMM
+    typename Operator,
+    /// Use zfill or predicate for out-of-bound cp.async
+    SharedMemoryClearOption SharedMemoryClear = SharedMemoryClearOption::kNone,
+    /// Gather operand A by using an index array
+    bool GatherA = false,
+    /// Gather operand B by using an index array
+    bool GatherB = false,
+    /// Scatter result D by using an index array
+    bool ScatterD = false,
+    /// Permute result D
+    typename PermuteDLayout = layout::NoPermute,
+    /// Permute operand A
+    typename PermuteALayout = layout::NoPermute,
+    /// Permute operand B
+    typename PermuteBLayout = layout::NoPermute,
+    ///
+    typename Enable = void
+>
+struct DefaultGemm;
+
+
+// 特化模板
+template <
+    /// Element type for A matrix operand
+    typename ElementA,
+    /// Layout type for A matrix operand
+    typename LayoutA,
+    /// Access granularity of A matrix in units of elements
+    int kAlignmentA,
+    /// Element type for B matrix operand
+    typename ElementB,
+    /// Layout type for B matrix operand
+    typename LayoutB,
+    /// Access granularity of A matrix in units of elements
+    int kAlignmentB,
+    /// Element type for C and D matrix operands
+    typename ElementC,
+    /// Element type for internal accumulation
+    typename ElementAccumulator,
+    /// Threadblock-level tile size (concept: GemmShape)
+    typename ThreadblockShape,
+    /// Warp-level tile size (concept: GemmShape)
+    typename WarpShape,
+    /// Warp-level tile size (concept: GemmShape)
+    typename InstructionShape,
+    /// Epilogue output operator
+    typename EpilogueOutputOp,
+    /// Threadblock-level swizzling operator
+    typename ThreadblockSwizzle,
+    /// Number of stages used in the pipelined mainloop
+    int Stages,
+    /// If true, kernel is configured to support serial reduction in the
+    /// epilogue
+    bool SplitKSerial,
+    /// Operation performed by GEMM
+    typename Operator,
+    /// Use zfill or predicate for out-of-bound cp.async
+    SharedMemoryClearOption SharedMemoryClear,
+    /// Gather operand A by using an index array
+    bool GatherA,
+    /// Gather operand B by using an index array
+    bool GatherB,
+    /// Scatter result D by using an index array
+    bool ScatterD,
+    /// Permute result D
+    typename PermuteDLayout,
+    /// Permute operand A
+    typename PermuteALayout,
+    /// Permute operand B
+    typename PermuteBLayout
+>
+struct DefaultGemm<ElementA, LayoutA, kAlignmentA, ElementB, LayoutB, kAlignmentB, ElementC,
+                   layout::RowMajor, ElementAccumulator, arch::OpClassTensorOp,
+                   arch::Sm90, ThreadblockShape, WarpShape, InstructionShape,
+                   EpilogueOutputOp, ThreadblockSwizzle, Stages, SplitKSerial,
+                   Operator, SharedMemoryClear, GatherA, GatherB, ScatterD,
+                   PermuteDLayout, PermuteALayout, PermuteBLayout> {
+  /// Define the threadblock-scoped matrix multiply-accumulate
+  using Mma = typename cutlass::gemm::threadblock::DefaultMma<
+      ElementA, LayoutA, kAlignmentA, ElementB, LayoutB, kAlignmentB,
+      ElementAccumulator, layout::RowMajor, arch::OpClassTensorOp, arch::Sm90,
+      ThreadblockShape, WarpShape, InstructionShape, Stages,
+      Operator, false, SharedMemoryClear, GatherA, GatherB, 
+      PermuteALayout, PermuteBLayout>::ThreadblockMma;
+
+  static const int kPartitionsK = ThreadblockShape::kK / WarpShape::kK;
+
+  /// Define the epilogue
+  using Epilogue =
+      typename cutlass::epilogue::threadblock::DefaultEpilogueTensorOp<
+          ThreadblockShape, typename Mma::Operator, kPartitionsK, EpilogueOutputOp,
+          EpilogueOutputOp::kCount, ScatterD, PermuteDLayout>::Epilogue;
+
+  /// Define the kernel-level GEMM operator.
+  using GemmKernel = kernel::Gemm<Mma, Epilogue, ThreadblockSwizzle, SplitKSerial>;
+};
+
+
+```
+
+
+
+```
+include/cutlass/gemm/kernel/default_gemm.h
+
+using GemmKernel = kernel::Gemm<Mma, Epilogue, ThreadblockSwizzle, SplitKSerial>;
+```
+
+
+
+实际的执行逻辑：
+
+```
+include/cutlass/gemm/kernel/gemm.h
+
+void operator()(Params const &params, SharedStorage &shared_storage)
+
+计算
+// Construct thread-scoped matrix multiply
+Mma mma(shared_storage.main_loop, thread_idx, warp_idx, lane_idx);
+
+
+using Mma = Mma_;
+
+
+typename Mma_, 
+```
+
+
+
+```
+include/cutlass/gemm/kernel/default_gemm.h
+ 
+ 
+ using Mma = typename cutlass::gemm::threadblock::DefaultMma<
+      ElementA,
+      LayoutA,
+      kAlignmentA,
+      ElementB,
+      LayoutB,
+      kAlignmentB,
+      ElementAccumulator,
+      LayoutC,
+      arch::OpClassSimt,
+      arch::Sm50,
+      ThreadblockShape,
+      WarpShape,
+      InstructionShape,
+      2,
+      Operator
+      >::ThreadblockMma;
+```
+
+
+
+```
+  include/cutlass/gemm/threadblock/default_mma.h
+  
+  // Define the threadblock-scoped pipelined matrix multiply
+  using ThreadblockMma = cutlass::gemm::threadblock::MmaPipelined<
+      typename MmaCore::Shape, IteratorA, typename MmaCore::SmemIteratorA,
+      IteratorB, typename MmaCore::SmemIteratorB, ElementAccumulator,
+      LayoutC, typename MmaCore::MmaPolicy>;
+```
+
+
+
+```
+  include/cutlass/gemm/threadblock/mma_pipelined.h
+  
+  /// Perform a threadblock-scoped matrix multiply-accumulate
+  CUTLASS_DEVICE
+  void operator()(
+    int gemm_k_iterations,                            ///< number of iterations of the mainloop
+    FragmentC &accum,                                 ///< destination accumulator tile
+    IteratorA iterator_A,                             ///< iterator over A operand in global memory
+    IteratorB iterator_B,                             ///< iterator over B operand in global memory
+    FragmentC const &src_accum)                       ///< source accumulator tile
+  {
+    // Prologue
+    prologue(iterator_A, iterator_B, gemm_k_iterations);
+
+    // Wait until we have at least one completed global fetch stage
+    gmem_wait();
+
+    // Perform accumulation in the 'd' output operand
+    accum = src_accum;
+
+    // Perform the MAC-iterations
+    // 计算逻辑
+    gemm_iters(gemm_k_iterations, accum, iterator_A, iterator_B);
+  }
+```
+
+
+
+```
+  include/cutlass/gemm/threadblock/mma_pipelined.h
+  
+  void gemm_iters(
+    int gemm_k_iterations,        ///< number of threadblock mainloop iterations
+    FragmentC &accum,             ///< [in|out] accumulator tile
+    IteratorA &iterator_A,        ///< [in|out] iterator over A operand in global memory
+    IteratorB &iterator_B)        ///< [in|out] iterator over B operand in global memory
+    
+    
+    ...
+    
+            warp_mma(
+          accum,
+          warp_frag_A[warp_mma_k % 2],
+          warp_frag_B[warp_mma_k % 2],
+          accum);
+          
+    ...
+    
+  /// Warp-level MMA operator
+  Operator warp_mma;
+  
+  
+  /// Warp-level Mma
+  using Operator = typename Policy::Operator;
+```
+
+
+
+```
+  include/cutlass/gemm/threadblock/default_mma.h
+  
+  // Define the threadblock-scoped pipelined matrix multiply
+  using ThreadblockMma = cutlass::gemm::threadblock::MmaPipelined<
+      typename MmaCore::Shape, IteratorA, typename MmaCore::SmemIteratorA,
+      IteratorB, typename MmaCore::SmemIteratorB, ElementAccumulator,
+      LayoutC, typename MmaCore::MmaPolicy>;
+      
+      
+  // Define the MmaCore components
+  using MmaCore = typename cutlass::gemm::threadblock::DefaultMmaCore<
+      ThreadblockShape, WarpShape, InstructionShape, ElementA, LayoutA,
+      ElementB, LayoutB, ElementAccumulator, LayoutC,
+      arch::OpClassSimt, 2, Operator>;
+```
+
+
+
+```
+  include/cutlass/gemm/threadblock/default_mma_core_sm80.h
+  /// Policy used to define MmaPipelined
+  using MmaPolicy = MmaPolicy<MmaTensorOp, MatrixShape<0, 0>,
+                                        MatrixShape<0, 0>, WarpCount::kK>;
+```
+
+
+
+```
+include/cutlass/gemm/threadblock/mma_base.h
+
+/// Policy object describing MmaTensorOp
+template <
+    /// Warp-level GEMM operator (concept: gemm::warp::Mma)
+    typename Operator_,
+    /// Padding used for A operand in shared memory (concept: MatrixShape)
+    typename SmemPaddingA_,
+    /// Padding used for B operand in shared memory (concept: MatrixShape)
+    typename SmemPaddingB_,
+    /// Number of partitions of K dimension of GEMM
+    int PartitionsK = 1>
+struct MmaPolicy {
+  /// Warp-level GEMM operator (concept: gemm::warp::MmaTensorOp or gemm::warp::MmaSimt)
+  using Operator = Operator_;
+
+  /// Padding used for A operand in shared memory
+  using SmemPaddingA = SmemPaddingA_;
+
+  /// Padding used for B operand in shared memory
+  using SmemPaddingB = SmemPaddingB_;
+
+  /// Number of partitions of K dimension
+  static int const kPartitionsK = PartitionsK;
+};
+```
+
+
+
+```
+  include/cutlass/gemm/threadblock/default_mma_core_sm80.h
+  
+  // Define the warp-level tensor op
+  using MmaTensorOp = typename cutlass::gemm::warp::DefaultMmaTensorOp<
+      WarpShape, InstructionShape, ElementA, SmemLayoutA, ElementB, SmemLayoutB,
+      ElementC, LayoutC, Operator, WarpCount::kK>::Type;
+
+  /// Policy used to define MmaPipelined
+  using MmaPolicy = MmaPolicy<MmaTensorOp, MatrixShape<0, 0>,
+                                        MatrixShape<0, 0>, WarpCount::kK>;
+```
+
+
+
+
+
+```
+include/cutlass/gemm/warp/default_mma_tensor_op_sm80.h
+
+struct DefaultMmaTensorOp<
+  WarpShape_, 
+  InstructionShape_, 
+  float, LayoutA, 
+  float, LayoutB, 
+  float, LayoutC, 
+  arch::OpMultiplyAdd, PartitionsK, AccumulatorsInRowMajor> {
+
+  // Uses TF32 internally
+  using Policy = cutlass::gemm::warp::MmaTensorOpPolicy<
+      cutlass::arch::Mma<
+        InstructionShape_, 
+        32, 
+        tfloat32_t, cutlass::layout::RowMajor, 
+        tfloat32_t, cutlass::layout::ColumnMajor,
+        float, cutlass::layout::RowMajor, 
+        arch::OpMultiplyAdd
+      >,
+      cutlass::MatrixShape<1, 1> >;
+
+  // Define the warp-level tensor op
+  using Type = cutlass::gemm::warp::MmaTensorOp<
+      WarpShape_, float, LayoutA, float, LayoutB, float, LayoutC,
+      Policy, PartitionsK, AccumulatorsInRowMajor>;
+};
+```
+
+
+
+```
+struct DefaultMmaTensorOp {
+  using Policy = cutlass::gemm::warp::MmaTensorOpPolicy<
+ 
+ 			// 封装的PTX指令
+      cutlass::arch::Mma<InstructionShape_, 32, ElementA,
+                         cutlass::layout::RowMajor, ElementB,
+                         cutlass::layout::ColumnMajor, ElementC,
+                         cutlass::layout::RowMajor, Operator_>,
+      cutlass::MatrixShape<1, 1> >;
+
+  // Define the warp-level tensor op
+  using Type = cutlass::gemm::warp::MmaTensorOp<
+      WarpShape_, ElementA, LayoutA, ElementB, LayoutB, ElementC, LayoutC,
+      Policy, PartitionsK, AccumulatorsInRowMajor>;
+};
+```
+
+swizzle
+
+```
+    stride_(ref.stride(0) / Layout::kElementsPerAccess), byte_offset_(0) {
+    // 这个方法的目的是通过warp内的laneId计算得出访问的共享内存的地址（如果是global -> share: 就是目的地址，如果是share -> register, 就是源地址）
+    // 这里面的tid就按照warp内的lane_id算，同时执行的warp之间一定会有bank冲突
+    // swizzle patterns for operandA LDS are
+    // 1. (tid[4] << 3) | (tid[2:0] ^ tid[4])
+    // 2. (tid[4] << 3) | (tid[2:0] ^ tid[4] ^ 0b10010)
+
+    // lan_id 最大是31 (11111), 右移四位 (1)
+    // 行方向的分组索引
+    int vec_row = (lane_id >> 4); // tid[4]
+
+    // (lane_id & 4): 与 100 取与, 就是倒数第二位, 右移两位，去掉末尾的0
+    // 列方向的分组索引
+    int vec_col = ((lane_id & 4) >> 2); // tid[2]
+
+    CUTLASS_PRAGMA_UNROLL
+    // kPointerCount 需要参与Swizzle计算的指针数量
+    // 的值是2
+    for (int i = 0; i < kPointerCount; ++i) {
+
+      // i == 1的时候，tid[4] << 3 的最大取值是16, 正好多了一位
+      if(i == 1) {
+        vec_row |= 2;
+      }
+      int access_contiguous_idx = (vec_col << 2) | ((lane_id & 3) ^ vec_row);
+      int access_contiguous = access_contiguous_idx;
+
+      int access_strided = vec_row;
+      pointer_[i] = reinterpret_cast<AccessType const *>(ref.data()) +
+        access_contiguous + access_strided * stride_;
+    }
+
+  }
+```
+
+
+

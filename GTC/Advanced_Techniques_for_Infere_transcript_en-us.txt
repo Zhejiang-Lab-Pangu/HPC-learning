@@ -1,0 +1,2276 @@
+Transcript Powered by AI
+
+Advanced Techniques for Inference Optimization With TensorRT-LLM
+
+
+00:06
+Hey everyone, thank you so much for being here today.
+
+00:08
+I'm just overwhelmed by everyone showing up and
+
+00:11
+really appreciate all the support.
+
+00:13
+See a few friends in the audience, a lot of new friends, couple
+
+00:16
+sworn enemies, don't tell anyone.
+
+00:18
+But I'm just incredibly thrilled to have everyone here today.
+
+00:22
+We're going to be talking about advanced techniques for influence
+
+00:25
+optimization with TensorRT-LLM and just by way of introduction, I'm
+
+00:31
+Philip and this is Pankaj, we're from Baseten, Baseten is a model
+
+00:34
+influence platform, so we do model optimization all day every day and
+
+00:39
+we're huge fans of TensorRT-LLM.
+
+00:42
+Actually, when I was applying to speak here, I joked in
+
+00:44
+the application, in the CFP, that we're kind of the unofficial
+
+00:48
+marketing department for TRT-LLM.
+
+00:51
+We've used it in production to serve thousands of models.
+
+00:53
+We've built a bunch of custom tooling around it.
+
+00:55
+We've also spoken on these topics at other conferences,
+
+00:59
+like AI Engineer World's Fair, and published tons
+
+01:01
+of blogs on the topic.
+
+01:02
+So we're huge fans of TensorRT-LLM, and today we're going to share
+
+01:06
+with you why that is.
+
+01:08
+In terms of our agenda, we're going to talk through kind
+
+01:11
+of three different stages of the ideas behind model performance.
+
+01:14
+Number one, we're going to cover hardware really quickly,
+
+01:17
+just overview of GPUs and where TensorRT sits within
+
+01:20
+the model serving stack.
+
+01:22
+We're also going to talk about some of the principles behind
+
+01:25
+model performance.
+
+01:26
+That's, you know, the latency, throughput, quality, trade-off,
+
+01:29
+and some of the bottlenecks that we get from the hardware and
+
+01:32
+software stacks that we're using.
+
+01:34
+And then finally, we're going to do some deep dives into
+
+01:36
+different techniques.
+
+01:37
+There's a ton of different techniques in model performance.
+
+01:40
+We could list dozens and dozens of different things to try.
+
+01:43
+So we're going to try and get you oriented by breaking them
+
+01:45
+down into a few different goals that we're trying to optimize for.
+
+01:49
+Throughput, latency in terms of time to first token, and latency
+
+01:53
+in terms of time to next token.
+
+01:56
+What's important to understand is our goal here in this
+
+01:58
+talk is to understand this multidimensional optimization
+
+02:02
+space of model performance and identify which techniques
+
+02:05
+fit in which circumstances.
+
+02:07
+Philosophically, if you think about what optimization is,
+
+02:11
+Optimization is the process of making a general solution
+
+02:15
+better for one specific thing.
+
+02:17
+It's very difficult to optimize models in general.
+
+02:20
+We're going to talk about a couple free lunches that
+
+02:22
+exist within this space, but usually you have to choose
+
+02:25
+some trade-off So we're going to identify those in the talk today.
+
+02:32
+Jumping into an overview of hardware really quickly.
+
+02:35
+So, at the core, GPUs are throughput machines.
+
+02:38
+They are awesome at parallel computation.
+
+02:41
+You know, if you're thinking about vector math, matrix
+
+02:44
+multiplication, tensor operations.
+
+02:47
+They are great at taking huge batches and processing them
+
+02:50
+very efficiently.
+
+02:52
+And TensorRT-LLM is going to help us take full advantage
+
+02:55
+of this GPU architecture.
+
+02:57
+There's a few metrics that we're going to have to keep
+
+02:59
+in mind as we're going through these optimizations.
+
+03:02
+Number one is going to be VRAM, both in terms of the
+
+03:05
+amount of memory you have as well as the bandwidth that
+
+03:09
+memory is operating at.
+
+03:10
+This is going to be essential for understanding where
+
+03:12
+we can put our weights, our activations, our KV cache.
+
+03:15
+We're also going to take a look at FLOPs, your total
+
+03:18
+compute that's going to be especially important for pre-fill.
+
+03:21
+But there's more dimensions to this as well.
+
+03:24
+A big one is partitioning, making sure that we can go
+
+03:26
+all the way from fractional GPUs with MIG, multi-instance GPU,
+
+03:30
+all the way up to full nodes or even multi-node GPUs for inference.
+
+03:34
+And in those cases, we start to care a lot more about GPU
+
+03:38
+to GPU interconnect, how quickly can these machines talk to
+
+03:41
+each other, as well as GPU to CPU interconnect to see if we can
+
+03:45
+offload anything to CPU devices.
+
+03:49
+TensorRT-LLM is going to be our tool for doing all of this.
+
+03:52
+So TensorRT-LLM, it's a way of building TensorRT engines
+
+03:56
+for fast inference.
+
+03:57
+It supports dozens of different foundation models like LAMA, QUEN,
+
+04:00
+MISTRAL, different quantizations and number formats, different
+
+04:04
+optimizations like specular decoding, as well as advanced
+
+04:07
+architectural features from each new generation of GPUs.
+
+04:11
+GPUs, so using TensorRT-LLM, we use this sort of engine
+
+04:17
+creation mechanism where we're going to identify, you know,
+
+04:20
+model weights, what GPUs we're going to use, how many, what
+
+04:24
+configuration, we're going to set whatever plugins we need.
+
+04:28
+Set what quantization we need.
+
+04:30
+Set anything else that we need to put into this engine
+
+04:34
+to get optimized.
+
+04:36
+And then if we happen to be using speculative decoding,
+
+04:38
+we kind of take all that and do it again for the draft
+
+04:41
+model if we're using draft target.
+
+04:43
+We put that all into an engine builder and we get out an API.
+
+04:46
+So like how does that actually work?
+
+04:49
+In the model serving stack, you have your model pod.
+
+04:52
+This is like your docker container running within
+
+04:54
+your auto-scaling infrastructure.
+
+04:56
+Requests are coming in. Those can be HTTP, they can be web
+
+04:59
+sockets, whatever you want.
+
+05:01
+And those are going to get handled by a front-end model
+
+05:03
+server for output formatting, schema adherence.
+
+05:06
+If you're doing like
+
+05:08
+Structured output, you might be using something like outlines
+
+05:11
+in the model server.
+
+05:14
+That's something that we're not really going to talk
+
+05:16
+about very much today.
+
+05:17
+What we're going to talk about is more of the backend of
+
+05:20
+that model serving stack.
+
+05:21
+So within Triton or Triton 3.0 or Dynamo as it's called now,
+
+05:27
+you can also replace this with like a custom GRPC server if you want.
+
+05:32
+We have something called Briton which is just base 10 plus
+
+05:34
+Triton equals Briton.
+
+05:37
+Anyway, this GRPC server is actually going to handle
+
+05:40
+the inference, the batching, stuff like LoRa swapping,
+
+05:42
+and logic processing.
+
+05:44
+So this is where we're going to focus our attention today,
+
+05:47
+which is the backend of the model server within this model pod.
+
+05:52
+Ultimately, we can choose which hardware to use, we
+
+05:54
+can choose which tools to use, but we do have to fit our workflow
+
+05:58
+to the hardware and to the tools.
+
+05:59
+Everything we're talking about, the GPUs, the tools, they're
+
+06:02
+very flexible, but they're not infinitely flexible.
+
+06:04
+So we do have to be very aware of these constraints as we
+
+06:07
+work on optimization.
+
+06:09
+Now that we're kind of situated within that universe of where
+
+06:12
+we are physically on the GPU and where we are within the
+
+06:16
+stack, Punkage is gonna cover some principles that we have to keep
+
+06:19
+in mind for model optimization.
+
+06:22
+Great, thank you, Philip.
+
+06:26
+As we talk about these optimizations, and there are many,
+
+06:29
+the goal with this presentation is to build a mental model.
+
+06:32
+This is a large space, there is a top level, and there is a lot of
+
+06:35
+depth in each of these techniques.
+
+06:37
+My goal here is to help you get started, like see the
+
+06:41
+most important optimizations and how they fit in at the higher
+
+06:43
+level, and then you can go deeper.
+
+06:46
+And this all starts from the hardware architecture.
+
+06:49
+But let's first look at why do we do model performance optimizations.
+
+06:53
+What do we want?
+
+06:54
+First of all, we want our outdoor
+
+06:56
+We want our applications to be responsive.
+
+06:58
+We want the responses to appear faster, not wait for a long time.
+
+07:03
+We want the generation to be smooth.
+
+07:06
+It should have a real-time factor.
+
+07:07
+It should feel real.
+
+07:09
+That's the whole point of optimization.
+
+07:11
+Make it work for end-user cases.
+
+07:14
+Additionally, we want high throughput.
+
+07:16
+These GPUs are extremely expensive, like they can easily burn
+
+07:20
+a hole into a startup's budget and be a big line item on a lot
+
+07:24
+of big companies' budgets as well.
+
+07:26
+As you would know, the biggest expense in data center expansion
+
+07:30
+is going to be GPUs, so we better use them well.
+
+07:32
+High throughput is extremely important and a big goal of
+
+07:36
+model optimization.
+
+07:37
+And lastly, we want these to be production quality.
+
+07:39
+Model inference is inference.
+
+07:41
+It's like all the services we run.
+
+07:43
+They have to be up all the time.
+
+07:44
+They have to produce reliable output, no errors, error
+
+07:47
+recovery, everything.
+
+07:49
+And they should provide functionality in
+
+07:51
+the way users want.
+
+07:52
+We have to adhere to the OpenAI specification, do function
+
+07:56
+calling, produce structured output.
+
+07:58
+That all the functionality has to continuously keep going.
+
+08:05
+Okay, before diving into these techniques, let's
+
+08:07
+start from the bottom.
+
+08:08
+There are certain patterns and constraints that we have
+
+08:11
+to work with in all these techniques and optimizations.
+
+08:15
+And you will see a pattern, so let's cover some of these
+
+08:18
+at the very front.
+
+08:20
+The biggest one is compute versus memory bandwidth trade-off.
+
+08:23
+And you've probably heard about it a lot, but let me
+
+08:27
+refresh that a little bit.
+
+08:28
+Large models are large, right?
+
+08:30
+They have billions of parameters.
+
+08:32
+And those billions of parameters are required for generating
+
+08:35
+every single token.
+
+08:37
+Which means we are loading a lot of data before we can
+
+08:40
+do compute on it.
+
+08:41
+And the compute can just like hide behind it.
+
+08:43
+Compute, you're not even using the whole compute because you're
+
+08:46
+just fetching stuff from memory.
+
+08:48
+So a lot of these techniques, they go about optimizing for that.
+
+08:52
+And you need to know that, like where is the bandwidth
+
+08:54
+right now for your workflow so that you can move the needle
+
+08:57
+in the right direction.
+
+09:00
+Nature of traffic is very important, and this doesn't
+
+09:02
+get talked about a lot, but we see this a lot in practice.
+
+09:05
+If your volume is low, you want to optimize for a different setup.
+
+09:10
+If the volume is high, it's a different setup.
+
+09:12
+For example, if your load varies a lot, you want to
+
+09:15
+focus on auto-scaling very easily.
+
+09:17
+Availability of GPUs becomes important.
+
+09:20
+For example, you might want to use H100s, which are available
+
+09:23
+on demand, rather than an expensive or hard-to-get GPU like H200.
+
+09:29
+And if your volume is very low, you want to scale to zero.
+
+09:32
+Scaling becomes very important.
+
+09:33
+So nature of traffic is important.
+
+09:35
+Content of your request is very important.
+
+09:38
+For example, techniques like specular decoding, they depend,
+
+09:41
+they work better for code generation in certain use cases,
+
+09:44
+not as well for creative use cases.
+
+09:47
+So you need to know that pattern.
+
+09:49
+And the sequence length, the inputs and outputs, the size
+
+09:51
+of those matters a lot.
+
+09:53
+And all these techniques, they work together most of
+
+09:58
+the time, but not all of the time.
+
+09:59
+You need to know which technique works well with
+
+10:02
+the other techniques.
+
+10:03
+For example, you need GPU memory for KV cache reuse.
+
+10:06
+You also need it for batching, as we'll cover shortly.
+
+10:09
+So you need to find the trade-off.
+
+10:11
+And you need to use the right hardware for the technique.
+
+10:14
+If you find quantization is the best technique, you need
+
+10:16
+to use Hopper, things like that.
+
+10:21
+So diving into some of the techniques more specifically,
+
+10:25
+as we've kept hitting on, we're gonna be talking about
+
+10:27
+trade-offs all day here.
+
+10:29
+We got 28 minutes and 15 seconds left.
+
+10:31
+You're gonna hear a trade-off about 2,815 times in this presentation.
+
+10:36
+So we're gonna talk about latency, throughput, quality,
+
+10:39
+how you make those trade-offs.
+
+10:41
+There's some techniques like quantization that are amazing
+
+10:44
+for latency and throughput, but could potentially come
+
+10:46
+at the expense of quality.
+
+10:48
+Others like speculative decoding, amazing for throughput and
+
+10:51
+for quality, but can hurt latency.
+
+10:53
+So we're gonna show you how to balance all of these ideas.
+
+10:57
+We're gonna start with a deep dive into throughput.
+
+11:00
+With throughput, we're trying to get more tokens per second
+
+11:02
+out of our model.
+
+11:04
+As Pankaj said, if you're a startup, GPUs are a huge
+
+11:07
+percentage of your burn.
+
+11:08
+If you're an enterprise, they're a massive line item
+
+11:10
+on your cloud bill.
+
+11:11
+You're trying to get great value out of that.
+
+11:13
+More tokens per second means lower cost per token, means
+
+11:17
+ultimately use fewer GPUs, spend fewer resources, or
+
+11:22
+get more customer usage out of those existing resources.
+
+11:26
+To optimize for throughput, we're going to talk about two things.
+
+11:29
+Number one is batching and how to get larger batch sizes
+
+11:32
+more efficiently.
+
+11:33
+Number two is quantization and how to make your models smaller
+
+11:37
+without destroying their quality.
+
+11:42
+Batching is perhaps the most important optimization out there.
+
+11:45
+And that's another thing that's taken for granted.
+
+11:47
+Like, you have to batch.
+
+11:49
+You can get a throughput improvement of up
+
+11:51
+to 10x by batching.
+
+11:53
+So whatever you do, you need to make sure you can batch.
+
+11:56
+You trade off on batching in very difficult circumstances.
+
+12:01
+And what is the GPU fundamental behind it?
+
+12:04
+It's the same we talked about.
+
+12:05
+When you are loading these billions of parameters to
+
+12:08
+produce a single token,
+
+12:09
+In the same time, you can use extra compute and produce
+
+12:12
+multiple tokens, right, because all that compute is hiding behind just
+
+12:16
+fetching stuff from memory, GPUs are throughput machines, there is,
+
+12:20
+if you're bandwidth limited, you're throwing away all that compute,
+
+12:23
+and that's the idea with batching.
+
+12:25
+There is one trade-off with batching, which is
+
+12:27
+the latency trade-off.
+
+12:29
+So when this compute is free, why is there a latency trade-off?
+
+12:32
+That is because every single additional request also needs
+
+12:36
+slightly more memory.
+
+12:37
+You're using all the weights, but each request has activation memory.
+
+12:41
+It also has KV cache memory.
+
+12:43
+So there is incremental reduction in latency.
+
+12:46
+And as you go forward, at some point, you become compute bound.
+
+12:50
+And then it increases linearly.
+
+12:52
+What you want to do is find the sweet spot for your workload.
+
+12:56
+What latency is acceptable?
+
+12:58
+And that sweet spot, that batch size, is very, very
+
+13:02
+important to achieve.
+
+13:03
+Now, achieving that sweet spot might not be trivial.
+
+13:07
+It's not automatic.
+
+13:08
+You need resources to achieve that sweet spot.
+
+13:11
+And typically, you might not have enough memory to
+
+13:13
+achieve that sweet spot.
+
+13:14
+And you need to structure it so that you have that
+
+13:17
+memory from somewhere.
+
+13:18
+There are many ways to do it.
+
+13:22
+For example, use techniques like chunked pre-fill to save
+
+13:26
+on activation memory, and we'll talk about that a little bit.
+
+13:29
+Quantization can free up a lot of memory.
+
+13:31
+It has different trade-offs, we'll talk about that, but
+
+13:34
+it's another way.
+
+13:35
+And third, you can throw more resources at it.
+
+13:37
+You can throw more GPUs at it.
+
+13:38
+Even though you're throwing more GPUs at it, the improvement
+
+13:41
+in batching, the throughput improvement with that, can easily
+
+13:44
+make up for that in many scenarios.
+
+13:46
+So you want to set it up for that.
+
+13:48
+Lastly, I want to mention that some techniques don't work as well with
+
+13:52
+batching, and some need more work.
+
+13:55
+For example, specular decoding, and we'll talk more, trades
+
+13:58
+off this extra compute for TPS.
+
+14:01
+And on the other hand, it does not work well with
+
+14:04
+batching for that reason.
+
+14:05
+These are both trying to become compute-bound for
+
+14:08
+different reasons.
+
+14:09
+So you have to work well with that.
+
+14:11
+You might not get to the highest batch size with specular decoding
+
+14:15
+if you're looking at throughput.
+
+14:17
+And things like expert parallelism, you need very
+
+14:19
+careful orchestration for that.
+
+14:21
+It's very good for multi-node scenarios, and DeepSeq has a good
+
+14:24
+report on it, how to do it well.
+
+14:26
+But it's not automatic.
+
+14:27
+You have to structure it very well to benefit from batching there.
+
+14:36
+Quickly, this is the history of batching.
+
+14:40
+We started with these individual requests going one at a time.
+
+14:43
+Very wasteful, nobody should do that in very, very special
+
+14:46
+scenarios, right?
+
+14:47
+We're just throwing so much, wasting so much.
+
+14:51
+Dynamic batching was the first attempt where we batch whole
+
+14:54
+requests at a time, but you have to wait for batching,
+
+14:57
+and then all requests are not the same, so you're not actually
+
+15:00
+batching for the whole period, and you can see those holes there.
+
+15:03
+In-flight batching is a modern form of batching.
+
+15:06
+Everybody does that.
+
+15:07
+Not much to say there, but just to reiterate, it's very efficient.
+
+15:10
+There are no bubbles.
+
+15:12
+So all these unlocks have already been made.
+
+15:17
+Quantization is the next optimization, in my opinion,
+
+15:21
+that you should consider.
+
+15:22
+It helps with not just throughput, but all aspects of performance,
+
+15:27
+like time to first token and inter-token latency.
+
+15:30
+The trade-off with quantization is quality, model output quality.
+
+15:35
+The way I think about quantization is actually a form of compression,
+
+15:39
+lossy compression, that is good for LLMs.
+
+15:42
+Think of JPEGs.
+
+15:44
+The quality loss might be so insignificant that you don't notice
+
+15:47
+it for your use case, and your use case is the central point here.
+
+15:51
+None of these optimizations exist without your use case.
+
+15:54
+It has to be centered there.
+
+15:57
+Quantization works because the loss in quality for most use
+
+16:00
+cases might be very, very minor.
+
+16:02
+Like with FP8, we see almost no difference between the
+
+16:05
+curves when we do benchmarking.
+
+16:07
+But you should benchmark for your own use case.
+
+16:10
+And again here, there is a sweet spot.
+
+16:12
+You have choices here.
+
+16:14
+You can quantize different parts of it.
+
+16:16
+You can quantize weights.
+
+16:17
+You can quantize KV cache.
+
+16:18
+You can quantize activations.
+
+16:20
+And you can quantize them with different bits.
+
+16:22
+For example, you can use
+
+16:24
+You can use 8 bits for weights, but keep using 16 bits for activations
+
+16:27
+and KV cache, and weights generally quantize much, much better.
+
+16:31
+KV cache quantization leads to more quality loss, so you
+
+16:34
+have that gradation.
+
+16:35
+You might even use 4 bits for weights and 8 bits for activations.
+
+16:39
+You have all those options, and you should find the right
+
+16:42
+spot for your use case.
+
+16:44
+Additionally, you can use training to get over that quality
+
+16:46
+loss, and in many cases you can...
+
+16:49
+FP4 is a new format that's coming out and that's very
+
+16:51
+interesting and I'll tell you now.
+
+17:04
+So these are the various different formats.
+
+17:06
+What we see here is how they use their bits.
+
+17:08
+It's all about bits and bytes, right?
+
+17:10
+Each bit is important. How do they use it?
+
+17:12
+Floating-point formats use bits using Exponent and Mantisa.
+
+17:18
+What this means is that they have a very high...
+
+17:22
+This means that for small values, we have high precision.
+
+17:26
+For large values, we have low precision.
+
+17:28
+The amount of information is exactly the same.
+
+17:31
+The way it works better is that LLM values come in this form.
+
+17:34
+Like the weight values that we see, the activation values,
+
+17:36
+they are like that.
+
+17:38
+Some values are small, some are large.
+
+17:40
+We care about precision for small values.
+
+17:42
+They are much better than INT in our experience.
+
+17:45
+We almost never use int quantization,
+
+17:47
+always floating point.
+
+17:49
+So FP4 is important.
+
+17:50
+If you make FP4 work, this is another 2x unlock right there.
+
+17:56
+Wonderful, so we went over a couple different ideas with throughput.
+
+18:00
+We can use batching and we can use quantization.
+
+18:02
+These might seem like pretty basic optimizations, but it's important
+
+18:06
+as we get down the road into some more complex topics that we don't
+
+18:10
+lose sight of the fundamentals and we don't sacrifice the
+
+18:12
+major gains we're making here for small gains with future techniques.
+
+18:17
+Diving into latency, we've got a few things to talk about
+
+18:20
+in terms of time to first token.
+
+18:21
+Time to first token or first token latency is essential for
+
+18:24
+creating real-time user experiences that feel magical with instant
+
+18:28
+responses, but you have a lot of things to overcome to get there.
+
+18:34
+We could do a whole separate talk on network latency, which
+
+18:37
+we won't get into, but even once the request gets to the
+
+18:40
+GPU, we have to optimize for time to first token with stuff
+
+18:43
+Stuff like KV cache reuse.
+
+18:45
+Spoiler alert, this is going to be a bit of a free lunch.
+
+18:47
+This is maybe one of the last optimizations that's not going
+
+18:51
+to come with major trade-offs.
+
+18:53
+There's also things like disaggregated serving and
+
+18:56
+long context handling that make a huge impact here.
+
+18:59
+Time-to-force token latency is incredibly important for
+
+19:01
+a large number of products.
+
+19:03
+For example, code completion is a place where we care about this a
+
+19:06
+lot, as are chats and other things.
+
+19:10
+So yeah, let's dive into these topics and start
+
+19:13
+with KV cash reuse.
+
+19:16
+So like Philip said, this is one of those free lunches.
+
+19:19
+You should always use KV cache reuse.
+
+19:22
+KV cache is anyway generated when you process any inference request.
+
+19:26
+Keep it around, not throw it away.
+
+19:28
+The main thing with KV cache reuse is that you want to
+
+19:32
+set it up right so that you can get even more value out of it, right?
+
+19:38
+Where you store the KV cache is important.
+
+19:41
+And how much space you have is important.
+
+19:43
+The best place to store KV cache is the GPU memory.
+
+19:46
+There is no overhead in there, like it was anyway going to be there.
+
+19:50
+So that's the best place, but that's also the most
+
+19:53
+constrained space.
+
+19:54
+You need space for your model rates, you need space for
+
+19:56
+activations, and generally any request requires certain
+
+19:59
+amount of KV cache just for processing, right?
+
+20:03
+So you might not have that much space, but whatever space
+
+20:05
+you have, you should use it.
+
+20:06
+That's the best place.
+
+20:08
+You can extend that by offloading to CPU RAM, and with architectures
+
+20:12
+like Hopper, that's even easier, like up to 400 gigabytes per
+
+20:16
+second between CPU and GPU memory.
+
+20:20
+But even with Hopper architecture, you can get up to 50 gigabytes
+
+20:23
+per second, and for most scenarios, that's still quite beneficial.
+
+20:27
+So you benefit in TTFT, you benefit in throughput, because you're doing
+
+20:31
+less work, you're reusing work.
+
+20:34
+You're using a bandwidth between CPU and GPU.
+
+20:38
+To save on compute.
+
+20:39
+So it's an overall win and what's more with the modern
+
+20:43
+techniques like 3FS and yesterday we heard about Dynamo, if you use
+
+20:48
+SSDs on a good network in parallel across a large cluster, they
+
+20:53
+can start matching or even beating CPU to GPU memory bandwidth and you
+
+20:57
+can go directly from disk to GPU.
+
+21:00
+So this can be actually pretty good.
+
+21:01
+It's not really a trade-off, and you have a large space available.
+
+21:05
+Imagine you never forget any context.
+
+21:08
+Any important context is always in memory.
+
+21:10
+So you can actually start using disk, and this just
+
+21:12
+becomes very, very powerful.
+
+21:13
+So Dynamo is very interesting to us for that reason.
+
+21:18
+Another thing is cache-aware routing.
+
+21:20
+So now when you do kvcache reuse and you store this kvcache,
+
+21:24
+imagine there was no stickiness, everything is going everywhere.
+
+21:28
+You're going to end up with about the same kind
+
+21:30
+of kvcache on all GPUs.
+
+21:32
+Say you had a hundred GPUs, they almost have the same thing,
+
+21:35
+you're not really benefiting much.
+
+21:37
+By using cache-aware routing, you can spread it out.
+
+21:40
+Now the values are a little bit unique and
+
+21:43
+using cache-aware routing, you're able to use it properly.
+
+21:46
+And you can use all that space, you can use that 50x, 100x
+
+21:50
+space for storage, and that is good space on GPUs, and what else?
+
+21:55
+So, cache-over-routing is pretty critical.
+
+22:02
+Next technique we're gonna talk about is disaggregated serving.
+
+22:05
+Now we're talking in context of optimizing time to first token, but
+
+22:09
+each of these techniques is vast.
+
+22:11
+They have a lot of advantages and disadvantages, and TTFT
+
+22:15
+is just one of them.
+
+22:16
+Fundamentally, what is disaggregated serving?
+
+22:19
+Let's pin this down onto GPU again.
+
+22:21
+The fundamental thing here is pre-fill versus generation.
+
+22:25
+They are two different phases, and they're different enough that
+
+22:28
+even on same GPUs, typically we use different kernels for them, because
+
+22:32
+they have very different profiles.
+
+22:35
+The fundamental difference is pre-fill, you're processing
+
+22:37
+so many tokens at the same time, thousands of them at
+
+22:40
+the same time, that you are almost always compute-bound, right?
+
+22:45
+You don't have to worry about memory bandwidth in those
+
+22:48
+scenarios, which means you can use different techniques,
+
+22:50
+different even hardware for that.
+
+22:52
+And same with a generation.
+
+22:54
+Generation is usually memory bandwidth bound.
+
+22:55
+You need to have a very large batch size to make it compute bound.
+
+22:59
+There is some setup required.
+
+23:01
+Now when you do them on the same GPUs, they can
+
+23:05
+interfere with each other.
+
+23:06
+Prefills can come in and they block all the generation.
+
+23:09
+So your TPS goes down, the quality of output goes down.
+
+23:12
+And this is the state of world currently, right?
+
+23:14
+I'm not saying it's terrible, we're living with that, right?
+
+23:16
+But disaggregated serving, starting from the GPU architecture,
+
+23:21
+benefits from them.
+
+23:22
+This is a place where we can separate.
+
+23:25
+And we do. The advantages are we can throw different hardware at it.
+
+23:28
+We can scale these parts differently.
+
+23:30
+For example, by throwing more nodes at prefills, we can
+
+23:36
+do them in parallel.
+
+23:37
+Techniques like context parallelism help us process prefills in
+
+23:41
+parallel for the same request.
+
+23:43
+And if we have more resources for pre-fill, there's very
+
+23:46
+less likelihood that two requests, their pre-fills, will get
+
+23:49
+behind each other.
+
+23:50
+So overall, you are able to reduce DTFT a lot.
+
+23:53
+But you also see very smooth generation.
+
+23:56
+Now your generation is completely separate.
+
+23:58
+No big pre-fill is going to come in and stop it.
+
+24:00
+You might not observe this practically, but it matters.
+
+24:04
+The rate at which tokens arrive, the smoothness of
+
+24:07
+that matters, especially for voice agent use cases.
+
+24:10
+If it doesn't arrive that way, you have to make sure, you
+
+24:13
+have to do extra work to do that.
+
+24:14
+So there are many benefits of this technique, and you
+
+24:17
+will see more and more.
+
+24:18
+And check out Dynamo.
+
+24:21
+Long-context handling is not a technique, but think of
+
+24:24
+it as a case study.
+
+24:25
+A lot of things come together to make it work, and it's a
+
+24:28
+very important use case in general.
+
+24:30
+As you all know, context support in GPUs is, sorry, on large-language
+
+24:34
+models is increasing day by day.
+
+24:37
+It used to be 4,000, right?
+
+24:38
+That was the max a year back.
+
+24:40
+Now there is 132K with Gemma and DeepSeq, and even a million
+
+24:45
+tokens with Gemini.
+
+24:47
+So handling this case is very important.
+
+24:49
+What you need to do is to process such a large amount of information,
+
+24:54
+you need to use your resources well, you need to free up memory.
+
+24:58
+You should always use chunk pre-fill, where you don't process
+
+25:01
+this whole thing at the same time, the thousands of tokens, you
+
+25:04
+break them all down into chunks.
+
+25:06
+You're still compute-bound, but you don't need all those activations
+
+25:09
+as these tokens go through all the layers of the large language model.
+
+25:15
+Another quirk we found was that in TensorRT LLM, when
+
+25:18
+you start requests, by default, it would allocate the maximum possible
+
+25:22
+memory the request can take.
+
+25:25
+And for long context, theoretically, the model
+
+25:28
+can produce 100,000 tokens, right, unless the user
+
+25:31
+specifies max tokens.
+
+25:32
+And users are users.
+
+25:34
+They might not specify it.
+
+25:36
+And then this request, even though you just generate,
+
+25:38
+like, 100 tokens...
+
+25:40
+You are spending those multiple gigs of memory.
+
+25:43
+So we always use max utilization in that case, and perhaps a different
+
+25:47
+strategy is required, which is a hybrid, but definitely use
+
+25:50
+max utilization because guaranteed no-evig just doesn't work.
+
+25:54
+Thirdly, these requests are very heavy, both in pre-compute,
+
+25:58
+both in pre-fill and generation, because every token has to look
+
+26:01
+at all the previous tokens, right?
+
+26:04
+And they can be slower to process.
+
+26:06
+They can take up the whole memory, and batching may just
+
+26:09
+come down to a trickle.
+
+26:11
+And small requests, easy requests, can get behind them.
+
+26:14
+You have ahead-of-the-line blocking.
+
+26:16
+So you need very good load balancing techniques.
+
+26:18
+We even have an in-house technique called chunk generation, not
+
+26:21
+chunk pre-fill, to avoid that.
+
+26:23
+Like, break them. Like, stop these requests and let the
+
+26:26
+easy ones go through.
+
+26:28
+Help is on the way. DeepSeq MLA compresses KV cache, sliding window
+
+26:33
+techniques like DSA in DeepSeq, and global local layers in Gemma 3.
+
+26:38
+They make it so that for certain parts of the model, you can
+
+26:42
+look at less of the context.
+
+26:44
+You have more information about which previous tokens to look
+
+26:47
+at, which are more important than others, and you sort of mitigate
+
+26:51
+the long context complexities.
+
+26:54
+Awesome. So we've seen three different techniques for
+
+26:57
+first token latency, which, you know, help us get that
+
+27:01
+first token quickly.
+
+27:04
+But after the first token, you still need generation
+
+27:08
+to go pretty fast because otherwise you have those weird gaps like
+
+27:11
+I was just speaking back there.
+
+27:13
+So we're gonna go into next token latency.
+
+27:16
+We're going to improve our perceived tokens per second
+
+27:19
+using three of the heaviest hitting techniques we've covered
+
+27:22
+today, which are specular decoding, tensor and expert parallelism,
+
+27:25
+and multi-node inference.
+
+27:27
+We're gonna get through this stuff pretty quickly.
+
+27:29
+We do only have 11 minutes left, So save me a couple
+
+27:32
+at the end to do a few things.
+
+27:36
+Speculative decoding. Again, let's like pin this into GPU.
+
+27:41
+What we have is that when you're in the memory bandwidth bound
+
+27:44
+domain, you have this compute.
+
+27:46
+With batching, you can use it for throughput.
+
+27:48
+The idea with speculative decoding is that you can
+
+27:50
+speculate in that time.
+
+27:50
+If you have techniques that can, with certain amount of surety,
+
+27:52
+but not LLM, TPOT, and TPOT.
+
+27:54
+LLM, TPOT. LLM, TPOT.
+
+27:56
+LLM, TPOT.
+
+27:59
+LLM can predict future tokens and then you can use this extra
+
+28:02
+compute to verify those tokens.
+
+28:04
+This compute that is lying around, we can put it on TPS and specular
+
+28:09
+recording is indeed the most important technique if you want to
+
+28:13
+focus on TPS of a single request.
+
+28:15
+I don't think there is any other technique which has
+
+28:18
+that much benefit there.
+
+28:19
+You can go 2x, 3x, even 5x in many cases.
+
+28:23
+So how do we speculate?
+
+28:25
+There are many, many techniques.
+
+28:26
+There are three on the slide here, but there
+
+28:28
+are perhaps like 20 of them.
+
+28:30
+At least like five or six are very important of them.
+
+28:33
+Let's cover these three important ones.
+
+28:36
+The draft model approach is the original spec-deck approach.
+
+28:39
+You can use a small model like LLMA1B to predict
+
+28:42
+tokens for LLMA70B.
+
+28:44
+All these techniques, the main reason they work is that
+
+28:47
+not all tokens are the most difficult to predict.
+
+28:50
+Some are very easy, like punctuations, or if you
+
+28:52
+have code, when you're completing, some are very easy to predict,
+
+28:56
+and even a small model can do it.
+
+28:58
+And that's the idea.
+
+28:59
+Draft model will predict, and target model can use this
+
+29:02
+extra compute to verify.
+
+29:04
+The end result is that you have more tokens in the
+
+29:06
+same amount of time.
+
+29:07
+Medusa
+
+29:09
+LLM relies on training and training different heads.
+
+29:13
+You can train like three, four, five heads, and those
+
+29:16
+make the prediction.
+
+29:17
+So a training-based approach.
+
+29:18
+Eagle is also a training-based approach, and you sort of
+
+29:21
+train a draft model.
+
+29:23
+But you train it not just with the output tokens of the target model.
+
+29:27
+but also the intermediate outputs of the target model
+
+29:30
+and that helps increase the acceptance rate and the efficacy
+
+29:34
+of the entire approach.
+
+29:35
+All these approaches, they rely upon the one
+
+29:38
+parameter acceptance rate.
+
+29:39
+The higher the acceptance rate, the better the production,
+
+29:43
+the lower the overhead of of specular decoding.
+
+29:46
+And there is an overhead with specular decoding.
+
+29:48
+Speculation by its definition, you're speculating, which
+
+29:52
+means you can be wrong.
+
+29:53
+You can waste extra compute.
+
+29:55
+And as you go towards compute-bound domain,
+
+29:58
+this can start mattering more.
+
+30:00
+So you might not reach the max throughput in
+
+30:03
+many scenarios with it.
+
+30:04
+So you have to trade off TPS for throughput.
+
+30:08
+In this example, we show that the draft model predicts A,
+
+30:13
+B, E, and D. A turned out to be right, E is wrong.
+
+30:17
+And target model also produces one token, so we have A, B, C. We have
+
+30:21
+three tokens instead of one token.
+
+30:24
+And that's how it improves TPS.
+
+30:28
+Next, let's talk about model parallelism.
+
+30:31
+Parallelism is a very fundamental technique for many, many things.
+
+30:35
+In this case, we are talking about inter-token latency,
+
+30:39
+but it benefits everything, again.
+
+30:42
+Let's talk about a few forms of parallelism.
+
+30:44
+But before that, fundamentally, what is parallelism?
+
+30:48
+We want to throw resources at a problem.
+
+30:50
+We want to throw more resources at a request
+
+30:53
+to get certain characteristics.
+
+30:55
+For example, it helps us give more GPU memory, effectively
+
+30:59
+more GPU memory bandwidth, and that's the idea.
+
+31:02
+But as you know, in software engineering,
+
+31:04
+just throwing resources at a thing might not work.
+
+31:07
+Throwing software engineers at a project doesn't work.
+
+31:09
+You have to do it right.
+
+31:10
+You have to use the trade-offs very well.
+
+31:13
+For example, the first one is pipeline parallelism.
+
+31:15
+It's the easiest form of parallelism.
+
+31:17
+Just put some layers on one GPU, other layers on
+
+31:20
+the other GPU, and so on.
+
+31:22
+But it's not very popular for inference.
+
+31:24
+Because you can't use GPUs at the same time.
+
+31:26
+It goes sequentially between GPUs.
+
+31:29
+So comparatively, it's not the best technique, but it might
+
+31:32
+be useful in multi-node scenarios.
+
+31:33
+There is very little communication.
+
+31:35
+This is the other thing with parallelism, that there is
+
+31:37
+always a communication overhead.
+
+31:39
+And that's always the case in many scenarios, also GPUs.
+
+31:43
+Tensor parallelism is the most popular.
+
+31:45
+The idea is that ultimately in France is tensor operations.
+
+31:48
+It's mostly tensor multiplication operations, right?
+
+31:52
+And these operations can be done in parallel on different GPUs.
+
+31:55
+GPUs can do their own part of work, and then we can combine
+
+31:58
+through communication.
+
+31:59
+And that is the benefit.
+
+32:00
+The latency improves a lot because you're doing things
+
+32:03
+in parallel at the same time, but you're also communicating.
+
+32:06
+So it's not good from communication point of view.
+
+32:10
+And that's why there are other forms of parallelisms.
+
+32:12
+Expert parallelism does parallelism similar to tensor parallelism,
+
+32:17
+but keeps experts completely on dedicated GPUs.
+
+32:21
+And what that means, and we'll look quickly, is that there
+
+32:24
+is less communication, which is great for multi-node scenarios, and
+
+32:27
+we'll look at that shortly as well.
+
+32:29
+Context parallelism helps you get lower time to first token
+
+32:33
+by processing tokens in parallel, processing prefills in parallel.
+
+32:38
+Now, tensor parallelism also helps you process context
+
+32:43
+in parallel in some way, like ultimately everything is tensor.
+
+32:46
+But context parallelism is better because there
+
+32:48
+is less communication.
+
+32:50
+You can isolate these context parts separately and have
+
+32:53
+less communication, which is good for multi-node.
+
+32:57
+Let's quickly look at this figure for tensor parallelism versus
+
+33:01
+expert, where tensor parallelism, every expert is on all GPUs.
+
+33:06
+So all GPUs have to communicate with each other, and in a
+
+33:09
+more fragmented way.
+
+33:10
+Where with expert parallelism, whole experts are on GPUs.
+
+33:14
+So they can do their computation in a chunk, and then only
+
+33:18
+the experts that are involved in the computation for that
+
+33:21
+request need to communicate.
+
+33:22
+And if you do it well, like DeepSeq does, this can be a huge unlock,
+
+33:26
+especially for large fleets, like you have hundreds of GPUs, or I
+
+33:29
+think their size is 44 H100 nodes.
+
+33:33
+So they have H800.
+
+33:35
+It really scales well compared to TPE.
+
+33:36
+TPE, TensorRT-LLM doesn't scale well beyond 16, I think.
+
+33:40
+We haven't seen that get used.
+
+33:42
+And that's the fundamental, again, like, going back to the hardware,
+
+33:45
+we have these different nodes, they're connected via InfiniBand.
+
+33:49
+InfiniBand is the best networking technology to date.
+
+33:52
+Maybe what Jensen said yesterday will overwrite this, but it's
+
+33:56
+very high bandwidth and very low latency across nodes,
+
+33:59
+but it's one order of magnitude lower than NVLink inside the node.
+
+34:04
+And this hierarchical architecture matters a lot.
+
+34:07
+It matters on how you utilize parallelism strategies.
+
+34:10
+You might want tensor parallelism inside the node and expert
+
+34:14
+parallelism or pipeline parallelism across the nodes.
+
+34:17
+So hardware really matters.
+
+34:22
+We've covered a ton of techniques here today, from speculative
+
+34:26
+decoding, where maybe we can generate multiple tokens to
+
+34:29
+per forward pass.
+
+34:31
+We've talked about multi-node inference.
+
+34:34
+We've talked about the different parallelism strategies.
+
+34:39
+And just to kind of bring this all together, again, at the highest
+
+34:43
+level, we think about the hardware.
+
+34:45
+We think about our GPUs as throughput machines and
+
+34:47
+build optimizations around their limitations.
+
+34:50
+Within those principles, we can trade off between
+
+34:53
+latency, throughput, and quality using a range of
+
+34:56
+techniques depending on what we want to optimize for the most.
+
+35:01
+You know, it's kind of arrogant to put up a slide that says
+
+35:04
+one more thing in a presentation, especially at an NVIDIA conference,
+
+35:07
+not an Apple conference.
+
+35:08
+So you tell me if this one more thing justifies the slide.
+
+35:13
+But one thing that's important to understand with TensorRT-LLM
+
+35:17
+optimization is that it's good for actually more than just LLMs.
+
+35:22
+So this is a key insight we've had in the last few months
+
+35:25
+that's changed the way that we serve a wide variety of models.
+
+35:29
+LLM-based architectures are common across modalities.
+
+35:33
+So we've published our work on TensorRT-LLM for stuff
+
+35:36
+like Whisper, making the world's fastest Whisper inference
+
+35:39
+with a 1,000-time real-time factor.
+
+35:43
+We have in developer preview a embeddings engine that has
+
+35:47
+double the throughput of TEI using this top, using TensorRT-LLM.
+
+35:53
+And we're working on more modalities coming soon.
+
+35:56
+So everything we've talked about here, it's all based on
+
+35:59
+the principles of an autoregressive transformers model that iteratively
+
+36:03
+generates tokens.
+
+36:05
+That architecture extends beyond LLMs to these
+
+36:07
+modalities and others.
+
+36:09
+So TensorRT-LLM is going to remain an essential tool for
+
+36:12
+us moving forward, not only in the domain of optimizing LLMs, but also
+
+36:16
+models of all different modalities.
+

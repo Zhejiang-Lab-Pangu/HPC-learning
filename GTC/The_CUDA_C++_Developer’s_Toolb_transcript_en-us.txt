@@ -1,0 +1,2339 @@
+Transcript Powered by AI
+
+The CUDA C++ Developer’s Toolbox
+
+
+00:00
+So hello, everyone.
+
+00:02
+Welcome to TTC 2025.
+
+00:04
+My name is Bryce Adelstein Lelbach.
+
+00:07
+As Jake said, I am a principal architect at NVIDIA, where
+
+00:10
+I lead our programming language design and evolution efforts.
+
+00:14
+So my job is to make every major language a GPU language,
+
+00:18
+from Fortran to C++ to Python to maybe someday Rust and
+
+00:23
+JavaScript and other languages.
+
+00:25
+I'm involved in the leadership of many programming languages.
+
+00:29
+I chaired the standard C++ library evolution group and
+
+00:34
+the American Programming Languages Standards Committee.
+
+00:39
+Today, I'm here to explore with you the tools, libraries,
+
+00:44
+and best practices that you should use to write idiomatic
+
+00:48
+and modern CUDA C++ code.
+
+00:51
+But first, what is CUDA C++, and why would we want to use it?
+
+00:57
+So modern CPUs and GPUs are both general-purpose processors that
+
+01:01
+can run almost any kind of code.
+
+01:04
+They differ in what types of workloads they are optimized for.
+
+01:09
+So CPUs are optimized for latency.
+
+01:11
+They have more powerful cores and threads, but they have
+
+01:14
+far fewer of them.
+
+01:16
+They have less latency to access memory and more memory
+
+01:19
+that they can access at the cost of much lower throughput.
+
+01:24
+GPUs, on the other hand, are optimized
+
+01:26
+for bandwidth and parallelism.
+
+01:29
+GPUs can run hundreds of thousands of threads.
+
+01:32
+Their memory latency is higher, but the memory
+
+01:35
+throughput is much greater.
+
+01:39
+So how do we program a GPU in C++?
+
+01:44
+Well, with CUDA C++ and NVIDIA's accelerated libraries.
+
+01:48
+But what exactly is CUDA C++?
+
+01:52
+So CUDA C++ is an extension of standard C++ for writing
+
+01:57
+programs that simultaneously run on CPUs, hosts, and GPUs, devices.
+
+02:04
+So in host code, you just write regular C++.
+
+02:07
+You can use all of standard C++.
+
+02:11
+And in device code, most but not all of standard
+
+02:14
+C++ is supported today.
+
+02:17
+For example, you can't throw exceptions yet in device code.
+
+02:21
+There are some restrictions about how host code and device
+
+02:24
+code can interact.
+
+02:25
+For example, in most cases, a variable on the stack
+
+02:29
+in device code can't be accessed by host code.
+
+02:34
+You don't have to write your CUDA C++ programs from scratch.
+
+02:39
+There's a diverse collection of CUDA-accelerated libraries
+
+02:42
+that you can and should leverage.
+
+02:45
+These libraries have been carefully designed and tuned to
+
+02:48
+provide speed-of-light performance.
+
+02:51
+So before you write any CUDA C++ code, you should first check
+
+02:55
+if there's a library that you can use for your particular use case.
+
+02:59
+And if there is, you should try it out and benchmark it, and
+
+03:02
+if it delivers the performance that you need, then you should use it.
+
+03:05
+There's no need to reinvent the wheel.
+
+03:08
+So now let's dive in with our first CUDA C++ program.
+
+03:14
+So imagine we have a bunch of cups of hot water at different
+
+03:17
+temperatures that are recorded by a thermometer in each cup.
+
+03:21
+And we want to simulate how these cups will cool down.
+
+03:25
+So we'll do this by applying Newton's laws of cooling for
+
+03:30
+a number of time steps to the cups.
+
+03:35
+In standard C++, we'd represent our set of cups with a std
+
+03:39
+vector of floats.
+
+03:42
+And then next, we would need to define our per-cup cooling
+
+03:45
+operator with a C++ lambda, which is just a function object.
+
+03:52
+And then for each time step, we apply the operator to all of the
+
+03:57
+cups using one of the The standard C++ algorithms stood transform.
+
+04:04
+When we compile the standard C++ code, our compiler lowers
+
+04:08
+each function and operation to the appropriate instruction
+
+04:12
+set for the target processor.
+
+04:16
+But when we're writing a CUDA C++ program, there are two different
+
+04:19
+kinds of target processors, the host and the device, and
+
+04:23
+each has its own instruction set.
+
+04:25
+The CUDA C++ compiler in VCC will compile CUDA C++ code
+
+04:31
+for the different targets.
+
+04:33
+But how does NVCC know what target a particular function
+
+04:38
+should be compiled for?
+
+04:41
+Well, you've got to tell it.
+
+04:43
+That's what execution space annotations are for.
+
+04:47
+If you don't provide an execution space annotation, then the
+
+04:50
+function will only be compiled for host code, meaning the CPU.
+
+04:55
+You can also explicitly request this with the host annotation.
+
+05:01
+If a function has only the device annotation, then it will
+
+05:04
+be compiled only for device code, meaning the GPU, and you won't be
+
+05:09
+able to call it from a host code.
+
+05:12
+If a function has both the host and the device annotation,
+
+05:16
+then it can be used on both the CPU and the GPU.
+
+05:20
+So now that our operator can run on our GPU, we still need
+
+05:25
+to actually invoke it there.
+
+05:28
+Execution of a CUDA program always begins on the host with main.
+
+05:34
+Work must be explicitly launched on the device.
+
+05:39
+Transitions between host and device are always going to be explicit.
+
+05:42
+You have to call a function that launches work on the GPU.
+
+05:46
+CUDA C++ won't magically decide to run things on the GPU for you.
+
+05:53
+And functions that are invoked on the device will stay on the device.
+
+05:57
+You can't launch a host function from the device.
+
+06:03
+So going back to our example, the work we want to launch
+
+06:06
+on the device is our std transform.
+
+06:11
+And we can launch this on the device using thrust transform.
+
+06:15
+It does the same thing as std transform, but in parallel
+
+06:19
+and on the device.
+
+06:21
+So it takes one additional parameter and execution policy,
+
+06:25
+which describes the user's requirement for how the algorithm
+
+06:29
+can be paralyzed.
+
+06:32
+In this case, we're asking for the algorithm to be launched
+
+06:35
+in parallel on a CUDA device.
+
+06:40
+We also need to make sure that the data is accessible by the device,
+
+06:44
+which we do by switching from std vector to thrust universal vector.
+
+06:49
+So what exactly is the thrust library that I've
+
+06:53
+been showing you here?
+
+06:53
+Well, the thrust library, this library,
+
+06:58
+I promise, Jake, there would be a costume change, is the
+
+07:02
+C++ Parallel Algorithms Library.
+
+07:04
+Its execution policy parallel algorithms that we just saw were
+
+07:07
+adopted by standard C++ in 2017.
+
+07:11
+Thrust has implementations of those standard parallel algorithms,
+
+07:18
+and it also has a collection of extensions and additions
+
+07:21
+to the standard algorithms.
+
+07:24
+Thrust also has heterogeneous containers that behave like
+
+07:27
+std vector but store their contents in different kinds
+
+07:31
+of memory that are accessible to different kinds of processors.
+
+07:36
+std vector's contents might only be accessible in host code.
+
+07:41
+When you construct or assign to a std vector, that operation
+
+07:45
+is done in serial, which can It can be quite slow if you're
+
+07:48
+dealing with large amounts of data, as we often do using GPUs.
+
+07:53
+Thrust universal vectors contents are always accessible in both
+
+07:57
+host and device code.
+
+07:59
+Operations on thrust vectors, like construction and assignment,
+
+08:03
+are going to be executed in parallel and on the device.
+
+08:09
+Thrust also has a collection of iterators that can be used
+
+08:12
+in conjunction with Thrust's algorithms to compose more
+
+08:16
+complex computational patterns.
+
+08:19
+So standard C++ and Thrust algorithms typically iterate
+
+08:23
+over sequences of objects.
+
+08:25
+For example, the elements of a container.
+
+08:29
+Now in numerical and scientific computing, we often want to
+
+08:34
+iterate through indices instead Instead of objects, because, for
+
+08:37
+example, we're applying a stencil.
+
+08:41
+We can do this with thrust counting iterator.
+
+08:44
+A counting iterator is constructed from an integer, and it represents
+
+08:48
+the range of all integers from that integer onwards.
+
+08:51
+When dereferenced, it returns that integer.
+
+08:54
+When incremented, it will increment that integer.
+
+08:58
+By passing a counting iterator to a thrust algorithm, like
+
+09:01
+for each n, we can iterate over indices instead of objects.
+
+09:08
+Thrust also has a constant iterator, which will just
+
+09:11
+repeat the given number forever.
+
+09:17
+Iterators can help us fuse together operations into beefier
+
+09:21
+and more efficient work.
+
+09:23
+Suppose that we want to transform some data with one function, f,
+
+09:28
+and then reduce it with a reduction operation, g. There's two problems
+
+09:32
+with this approach, as shown here.
+
+09:36
+By default, the thrust algorithms are fork-join synchronous.
+
+09:40
+So each invocation launches its work on the device and
+
+09:43
+then blocks in the host until that work completes.
+
+09:47
+In our example, this leads to an unnecessary latency bubble,
+
+09:50
+which can degrade performance, because we're gonna wait on the
+
+09:54
+host for the transform to finish before we can start on the reduce,
+
+09:57
+before we can even enqueue the reduce to the device, even though
+
+10:01
+there's nothing that we actually need to do on the host with
+
+10:03
+the result of that transformation.
+
+10:07
+Additionally, we've had to allocate OIN temporary storage
+
+10:11
+for the transformation, which will waste precious device
+
+10:15
+memory and cause expensive and unnecessary loads and stores
+
+10:18
+from device to global memory.
+
+10:23
+One way to address this problem is to fuse the two operations
+
+10:25
+together into a single parallel invocation, which can be done
+
+10:29
+with a transform iterator.
+
+10:31
+So a transform iterator takes some other iterator, some underlying
+
+10:35
+iterator, and a function.
+
+10:36
+And when you iterate a transform iterator, you get the results of
+
+10:40
+applying the function to the values from that underlying iterator.
+
+10:45
+And this is completely lazy.
+
+10:47
+The function is only evaluated as needed when the elements of that
+
+10:52
+returned iterator are accessed.
+
+10:55
+So for example here, the function f is not evaluated until the
+
+11:00
+elements of x are accessed in the reduction.
+
+11:06
+Sometimes we need to combine together multiple inputs
+
+11:10
+into a single range to pass to an algorithm.
+
+11:13
+And this can be done with a ZIP iterator, which takes
+
+11:16
+any number of other iterators and produces tuples that are
+
+11:19
+a combination of the values from the underlying iterators
+
+11:23
+at the corresponding position.
+
+11:25
+So, for example, here we make a zip iterator from X and Y. And
+
+11:30
+when you dereference this iterator, the first time, you're going to get
+
+11:34
+the two-element tuple X0 and Y0.
+
+11:37
+And then if we increment that iterator and dereference it
+
+11:39
+again, we'll get X1 and Y1.
+
+11:45
+You can also use ZIP iterators to invoke algorithms on overlapping
+
+11:50
+windows or stencils of elements.
+
+11:52
+So, for example, here, we're constructing a ZIP iterator
+
+11:56
+to the adjacent pairs of elements of X, and then applying the
+
+12:00
+function F to each of those pairs with for each N. So F will be
+
+12:05
+invoked with X0 and X1, and then it will be invoked with X1 and X2, et
+
+12:12
+cetera, until the end of the range.
+
+12:17
+So let's look at another example that's going to combine all
+
+12:20
+of this together.
+
+12:21
+Suppose we have two vectors of the same length, a and b, and
+
+12:24
+we want to calculate the maximum difference between corresponding
+
+12:28
+elements of each vector.
+
+12:30
+So we can do this by first calculating the difference between
+
+12:33
+each two elements, and then doing a max reduction of those differences.
+
+12:39
+So we start off with our two universal vectors, a and b.
+
+12:43
+And then we calculate the differences between each
+
+12:46
+two elements of A and B, storing it in a temporary
+
+12:49
+vector that we've allocated.
+
+12:50
+And then finally, we do a reduction of the differences with
+
+12:56
+maximum as the reduction operator.
+
+13:02
+We can improve this by replacing the transform with a zip iterator
+
+13:06
+and a transform iterator.
+
+13:10
+This zip iterator produces two element tuples of each
+
+13:13
+corresponding element of A and B.
+
+13:17
+And the transform iterator takes the zip iterator and
+
+13:20
+applies a lambda function to it that unpacks the tuple
+
+13:24
+and then computes the difference between those two values.
+
+13:30
+And this pattern of transforming and then reducing is quite
+
+13:34
+common and very powerful.
+
+13:36
+So Thrust has a single algorithm called TransformReduce that
+
+13:40
+does this fusion with the transform iterator for you.
+
+13:43
+And this code for TransformReduce is really just equivalent
+
+13:46
+to the code on the slide before.
+
+13:48
+It's actually implemented that way.
+
+13:50
+This is known as MapReduce in some domains.
+
+13:56
+Now, we've used two new facilities in this example, CUDA std
+
+14:00
+tuple instead of std tuple, and CUDA maximum instead of std max.
+
+14:06
+And these are facilities from libcu++, which is CUDA's C++'s
+
+14:10
+foundational and standard library.
+
+14:12
+And unfortunately, I don't have another shirt for libcu++.
+
+14:18
+CUDA C++ uses your host platform's C++ compiler and C++ standard
+
+14:24
+library for compiling host code.
+
+14:27
+So GCC, Clang, MSVC, etc.
+
+14:30
+would be used.
+
+14:31
+And that means that the facilities in the std namespace come
+
+14:34
+from the host C++ standard library and are therefore host-only.
+
+14:41
+libcu++ provides a subset of the C++ standard library
+
+14:45
+in the CUDA std namespace.
+
+14:48
+These facilities can be used in and across host and device code.
+
+14:54
+libcu++ also has many extensions to the C++ standard library,
+
+14:58
+as well as modern C++ APIs for the CUDA runtime and CUDA
+
+15:03
+device side facilities.
+
+15:05
+You can find these in the CUDA namespace.
+
+15:10
+Beta features that are not yet stable are in the CUDA
+
+15:13
+experimental or CUDAx namespace.
+
+15:19
+So now let's move on to another example.
+
+15:21
+That's me during the pandemic with a lot of hair.
+
+15:24
+We're gonna simulate my oven, which has a heating element
+
+15:27
+on top and on bottom.
+
+15:30
+We'll simulate it on a 2D grid by solving the heat
+
+15:33
+equation numerically with a five-point stencil.
+
+15:38
+Our solver function is going to take a thrust execution
+
+15:41
+policy, the dimensions of the grid, and two universal
+
+15:45
+vectors, u, which will represent the current state, and v, where
+
+15:51
+the next state will be written.
+
+15:54
+So we're going to use a thrust for each in over a counting
+
+15:58
+iterator to implement our stencil.
+
+16:02
+Before each N lambda, we'll need to capture the grid.
+
+16:05
+However, we can't just capture the universal vectors in the lambda.
+
+16:10
+If we were going to capture them by value, then we'd make
+
+16:12
+a copy, which is not what we want in this case.
+
+16:15
+And we can't capture them by reference, because while
+
+16:18
+the contents of the vector can be accessed from the device, the
+
+16:22
+vector object itself may not be in memory that the device can access.
+
+16:27
+For example,
+
+16:28
+If the vector object is on your host thread stack, that may
+
+16:32
+not be accessible in device code.
+
+16:36
+So instead, we obtain pointers to the vectors
+
+16:38
+and capture those instead.
+
+16:43
+The first thing we do in the body of the lambda is reconstruct
+
+16:46
+the multidimensional indices from the linear index, from
+
+16:49
+counting iterator.
+
+16:52
+Next we need to check if we're in the interior of the grid, in which
+
+16:56
+case we need to apply the stencil.
+
+16:59
+And then here's what the stencil computation itself looks like.
+
+17:03
+There's a lot of indexing math there.
+
+17:07
+And if we're on the boundary, we don't change anything.
+
+17:10
+Now, there's a couple of different unfortunate things about this
+
+17:13
+code, but I'm going to pick on one in particular, which
+
+17:16
+is the repetitive and error-prone multidimensional indexing.
+
+17:20
+What we really want here is a proper abstraction
+
+17:22
+for multidimensional data.
+
+17:25
+Fortunately, I spent 10 years getting one into the C++ standard
+
+17:28
+library and that's called mdspan.
+
+17:31
+It's a non-owning handle to multidimensional data.
+
+17:33
+It's basically a pointer plus metadata.
+
+17:37
+The layout of an mdspan is configurable and the dimensions
+
+17:41
+can be specified either at runtime or at compile time.
+
+17:46
+Copying them is cheap and trivial because you just copy
+
+17:50
+the pointer, not the contents.
+
+17:53
+mdspan also has a powerful slicing facility called sub-mdspan that
+
+17:57
+produces new mdspans that view a subset of the same underlying data.
+
+18:03
+If you want to learn more about mdspan, I gave a talk
+
+18:06
+at GTC 2023 where I covered it in a lot more detail.
+
+18:10
+There's a link right there.
+
+18:13
+Let's rewrite our heat equation solver to use mdspans.
+
+18:20
+So instead of taking universal vectors and obtaining pointers
+
+18:23
+to them, we can capture the mdspans, and then they will
+
+18:29
+be copied to the device.
+
+18:31
+We replace the manual indexing with calls to
+
+18:33
+mdspan's index operator with the multidimensional coordinates,
+
+18:38
+so we no longer have all of that error-prone indexing math.
+
+18:41
+And if we need to change layout, it's a lot easier for us to
+
+18:44
+do, because that's just a parameter of mdspan.
+
+18:50
+So now let's write a function to set up the initial state.
+
+18:52
+It will take a policy and an mdspan to initialize.
+
+18:56
+We can break the grid down into three different regions
+
+18:59
+that we need to initialize.
+
+19:02
+We'll use sub-mdspan, the mdspan slicing operation, to obtain
+
+19:06
+mdspans to these three regions.
+
+19:08
+Sub-mdspan takes an mdspan and one slice specifier for each dimension.
+
+19:13
+That should be selected.
+
+19:15
+A slice specifier could be a single index, a range of
+
+19:18
+indices, optionally with a stride, or the entire dimension,
+
+19:22
+which is indicated by CUDA stood full extent.
+
+19:26
+The first two regions that we need are the row at the
+
+19:29
+top of the grid and the row at the bottom of the grid.
+
+19:32
+The last region is the interior points, which is going to
+
+19:35
+be everything except for the first Last and last row.
+
+19:40
+We'll set the top and bottom to a high temperature, and
+
+19:45
+then we'll set the interior region to a lower temperature.
+
+19:50
+So now let's look at how we'd write the time-stepping loop
+
+19:54
+that would repeatedly call that solver function that we wrote.
+
+19:57
+So we're going to output the state of the system
+
+19:59
+periodically during the loop.
+
+20:01
+So every compute steps evaluations will do one output.
+
+20:06
+And in total, we'll do write steps times compute steps iterations.
+
+20:11
+Sorry, that's every write steps evaluations will do one output.
+
+20:16
+So we'll start by setting up our two universal vectors and
+
+20:19
+constructing empty spans to them.
+
+20:22
+And then we'll initialize u with the function we just wrote.
+
+20:27
+Next, every write step, we'll save the current state by calling
+
+20:32
+some save to file function on u. And then for every compute step,
+
+20:38
+we'll call our solver function with u as the input and v as the output.
+
+20:44
+And then we'll set the new state from the solve as the input for
+
+20:47
+the next solve by swapping u and v.
+
+20:52
+Now, as we discussed earlier, thrust algorithms are all
+
+20:55
+fork-join synchronous by default.
+
+20:57
+So they launch the device work and then they wait until
+
+21:00
+that work has completed before they return to the caller.
+
+21:04
+So this introduces unnecessary waiting on the host and
+
+21:09
+underutilization on the device because we can't
+
+21:12
+launch the next piece of work until the first one finishes.
+
+21:16
+And we want to be able to overlap the latency
+
+21:18
+of launching device work.
+
+21:20
+So that our GPU will always have work in the queue and
+
+21:23
+reach maximum utilization.
+
+21:27
+This means we need asynchrony, and for that we'll have to change the
+
+21:31
+execution policy that we're using.
+
+21:35
+The thrust CUDA PAR no-sync policy will not wait for device
+
+21:40
+work after it has been launched.
+
+21:43
+The algorithm calls will return immediately, and
+
+21:46
+the caller will be responsible for synchronizing later.
+
+21:52
+In our case, we'll need to wait on all device work every
+
+21:55
+write step before we call save to file to ensure that
+
+21:59
+the last compute step has completed before we begin writing.
+
+22:04
+So this is a good start to making our code asynchronous.
+
+22:06
+And the next step would be to use CUDA streams.
+
+22:11
+So a stream is a chain of device work that is executed in order.
+
+22:16
+You can think of it like a queue.
+
+22:18
+You can have thrust launch work on a specific stream
+
+22:22
+by passing the stream to the on method of the execution policy.
+
+22:28
+So here, we asynchronously launch a 4-H applying F and
+
+22:33
+a 4-H applying G on the device.
+
+22:36
+The F 4-H will complete execution before the G 4-H starts.
+
+22:44
+A stream can record an event that host code can synchronize
+
+22:47
+with, waiting for all work up until that event to complete.
+
+22:51
+You can do this in code by simply calling wait on the stream object.
+
+22:56
+In this case, it will wait for both foreaches to complete.
+
+23:02
+If we instead wait before the call to G, to the G4H,
+
+23:06
+then we'll only wait for the F4H.
+
+23:13
+You can create multiple streams that run concurrently on a
+
+23:16
+single device, just as you can run multiple threads concurrently
+
+23:19
+on a single host.
+
+23:22
+Streams can wait upon other streams as well through events.
+
+23:26
+You can explicitly record an event on one stream with the recordEvent
+
+23:30
+method, and then you can have another stream wait for that event
+
+23:34
+by calling the overload of wait on a stream that takes an event.
+
+23:40
+Note that the host will not block when you call
+
+23:43
+this overload of wait.
+
+23:44
+It will just cause the stream to wait upon that event.
+
+23:51
+You can use streams to control what specific device your code runs on.
+
+23:55
+By default, they're constructed on the first device, but you
+
+23:59
+can explicitly construct them on any device on your system.
+
+24:03
+Dependencies can be established between streams running on
+
+24:06
+different devices.
+
+24:10
+So let's revisit our heat equation example and add streams.
+
+24:16
+So we'll create a stream and define an asynchronous policy
+
+24:19
+that will run on that stream, and then use that policy in
+
+24:22
+all of our calls to thrust.
+
+24:24
+Instead of waiting with all work on the device at the start
+
+24:28
+of each write step, we'll just wait for the work on our stream.
+
+24:35
+Now there are some limits to thrust support for asynchrony
+
+24:38
+that you should be aware of.
+
+24:39
+It works great for algorithms like foreach and transform
+
+24:43
+because they don't return anything that is dependent on
+
+24:46
+the computation and they don't have to allocate any temporary storage.
+
+24:50
+But some thrust algorithms either return a result that's
+
+24:53
+dependent on the computation or allocate temporary storage
+
+24:57
+that's needed for the computation.
+
+25:00
+So today, these interfaces will always block, even if
+
+25:04
+you use the par no sync policy.
+
+25:08
+For example, consider inclusive scan.
+
+25:10
+So it returns an iterator to the end of the output.
+
+25:12
+Now, that doesn't depend on the computation, so we can
+
+25:15
+just compute it beforehand by incrementing the output
+
+25:17
+iterator by the size of the input.
+
+25:19
+However, unlike 4-H and transform,
+
+25:23
+Scan algorithms require temporary storage.
+
+25:26
+Thrust has to allocate and then deallocate the storage
+
+25:29
+before the algorithm returns.
+
+25:31
+And those allocations and deallocations will block today,
+
+25:35
+even with the par nosync policy.
+
+25:39
+Algorithms like COPYIF return an iterator to the end of
+
+25:42
+the output as well, but in the case of COPYIF, that depends
+
+25:46
+on how many elements will pass the predicate, which we won't know
+
+25:49
+until the computation is complete.
+
+25:51
+So these kinds of algorithms are implemented in terms of
+
+25:54
+a scan, so they additionally need temporary storage.
+
+25:58
+So that means that thrust has to block before returning
+
+26:01
+from these algorithms, even with the par-no-sync policy.
+
+26:06
+And then reduction-based algorithms like Reduce, Count, FindIf, and
+
+26:10
+MaxElement return the result of the reduction, which requires blocking.
+
+26:14
+They also need to allocate temporary storage.
+
+26:18
+If we need asynchronous versions of these algorithms today,
+
+26:21
+there's another lower-level library called Cub that we can use that
+
+26:26
+is asynchronous from the ground up.
+
+26:28
+So KUB is the CUDA C++ algorithm authoring toolkit.
+
+26:34
+KUB provides cooperative building blocks for writing your own
+
+26:37
+device-side parallel algorithms.
+
+26:40
+But that's not the focus of our talk today.
+
+26:43
+There's another talk about writing CUDA C++ kernels that
+
+26:47
+will be in this room right afterwards that will cover
+
+26:49
+those primitives in greater detail.
+
+26:52
+KUB also exposes device-wide algorithms that you launch
+
+26:56
+from the host just like Thrust, and that's the part of KUB that
+
+26:59
+we're going to talk about today.
+
+27:02
+So as I said, KUB is a little bit lower level than Thrust.
+
+27:06
+We just discussed how some Thrust algorithms need to
+
+27:08
+allocate temporary storage, for example, reductions.
+
+27:12
+We implement GPU reductions with two passes.
+
+27:15
+The first pass divides the input up into chunks, each
+
+27:18
+of which is handled by a block of threads, which will collectively
+
+27:22
+reduce the entire chunk to a single value that is then stored in
+
+27:25
+a temporary array in global memory.
+
+27:28
+A second pass will then use a single block of threads
+
+27:31
+to reduce those aggregates in the temporary array to a single result.
+
+27:36
+Now with thrust, that temporary array allocation
+
+27:39
+and deallocation is done implicitly within the algorithm.
+
+27:44
+CUB is asynchronous by design, so it doesn't return the
+
+27:48
+reduction result by value.
+
+27:50
+Instead, it takes an iterator and assigns the reduction
+
+27:53
+result to that iterator.
+
+27:55
+So when we call a CUB reduction, we need some device-accessible
+
+27:58
+storage for the result, which we create here.
+
+28:03
+With CUB today, we must allocate the temporary storage explicitly.
+
+28:08
+But first, we have to determine how much temporary
+
+28:11
+storage we will need.
+
+28:12
+And this is not trivial to figure out, because it's going to depend
+
+28:16
+on the algorithm, the data types, the operators, and whatever device
+
+28:21
+architecture we're compiling for.
+
+28:23
+And so since you need the same information that you'd invoke
+
+28:26
+the algorithm with to compute the temporary storage size, we just
+
+28:30
+use the same interface to do both.
+
+28:34
+So the first two parameters to a CUB algorithm are a pointer to
+
+28:37
+temporary storage and a reference to the temporary storage size.
+
+28:42
+If the pointer to temporary storage is null, then the
+
+28:45
+algorithm will not be invoked.
+
+28:48
+But instead, the temporary storage size will be computed, and it
+
+28:51
+will be assigned to that integral reference that you passed in.
+
+28:57
+So next, we need to allocate the temporary storage, which we can
+
+29:00
+do with a vector of CUDA std bytes.
+
+29:06
+And then finally, we call the CUB algorithm again, passing
+
+29:09
+in a pointer to the temporary storage this time.
+
+29:12
+And then this time, it will launch the work
+
+29:15
+asynchronously on the device.
+
+29:19
+Now let's rewrite our heat equation solver from before to use CUB.
+
+29:26
+Cub has a 4-H algorithm, just like Thrust, but since this algorithm
+
+29:30
+never needs temporary storage, you don't need to pass a temporary
+
+29:33
+storage pointer or size in.
+
+29:37
+Cub algorithms don't take execution policies, so we
+
+29:40
+don't need to pass that in anymore.
+
+29:41
+But we can specify what stream to run on, it's always the
+
+29:45
+last argument to a Cub algorithm, so we'll pass that in instead.
+
+29:51
+We're still using a counting iterator here.
+
+29:53
+Thrust iterators work great with Cub, and it's pretty common
+
+29:57
+for people to use them together.
+
+30:04
+But KUB has a better algorithm for this particular use case
+
+30:07
+of iterating an MD-SPAN.
+
+30:09
+It's called forEachInExtents, and it takes an MD-SPAN extents
+
+30:14
+object instead of an iterator, which is like the shape of the
+
+30:17
+MD-SPAN, and it calls the operator with the multidimensional indices.
+
+30:21
+So this means you don't have to reconstruct the multidimensional
+
+30:24
+indexing yourself, which reduces the complexity and increases
+
+30:28
+performance, because KUB will do that reconstruction in in whatever
+
+30:31
+way is going to be fastest.
+
+30:36
+So throughout this talk, we've been using thrust universal vectors
+
+30:40
+for device accessible storage.
+
+30:42
+Universal vectors are implemented with CUDA unified memory.
+
+30:45
+And so let's go under the hood and see how that works.
+
+30:49
+So a universal vector, it's accessible from both
+
+30:52
+host and device code.
+
+30:54
+But the host and the device have different physical memory.
+
+30:57
+So where do the contents of a universal vector actually reside?
+
+31:03
+Thrust Universal Vector's contents will start on the device because
+
+31:06
+that's where they are initialized.
+
+31:08
+So wherever the memory is touched first is where it
+
+31:10
+will reside first.
+
+31:11
+In the case of Thrust Universal Vector, it will
+
+31:13
+always be on the device.
+
+31:16
+If we then access an element of the vector from the host, the CUDA
+
+31:20
+platform may have to migrate the data from the device to the host.
+
+31:24
+The mechanisms for this transfer vary between platforms.
+
+31:28
+On systems with an NVIDIA CPU and GPU, there may not
+
+31:31
+be a migration at all, but there may be different costs for
+
+31:36
+one processor to access the memory of another processor, different
+
+31:39
+latencies, different bandwidths.
+
+31:41
+Migrations won't move the entire vector, just a part of it.
+
+31:46
+So it won't be at the granularity of a single element, though.
+
+31:49
+It'll be chunks that will be migrated at a time.
+
+31:54
+If there is a migration, then we end up with two copies of
+
+31:57
+that element in any other elements that were speculatively migrated.
+
+32:01
+There's a copy in host memory, and then there's a stale copy
+
+32:05
+in device memory.
+
+32:07
+If we access a different part of the vector later,
+
+32:12
+Then it will trigger another migration.
+
+32:16
+And if we later access that first element from device code,
+
+32:21
+Then we'd have to migrate the element back.
+
+32:26
+So with CUDA-unified memory, these transfers
+
+32:28
+are implicit and piecemeal.
+
+32:30
+This has advantages.
+
+32:32
+It's a lot simpler to program, and it allows
+
+32:34
+you to oversubscribe GPU memory.
+
+32:38
+And if we're not accessing the entire contents, it may
+
+32:41
+be more efficient.
+
+32:43
+However, if we're just iterating through the entire vector,
+
+32:46
+it will be less performant to migrate the vector piece by piece
+
+32:49
+instead of doing it all at once.
+
+32:53
+So unified memory is just one of the options available to us,
+
+32:56
+and it's the most user-friendly, which is why we've started with it.
+
+33:01
+But we can also allocate memory that is tied to a
+
+33:03
+particular target.
+
+33:05
+So host vector will allocate memory that can only be
+
+33:08
+accessed in host code.
+
+33:10
+And device vector will allocate memory that can only be
+
+33:12
+accessed in device code.
+
+33:14
+We actually used device vector earlier to allocate the memory
+
+33:17
+for the temporary storage for the CUB reduction.
+
+33:22
+To transfer between memory spaces, we can use thrust
+
+33:26
+copy, which works just like std copy semantically, but unlike
+
+33:31
+std copy, thrust copy understands different memory spaces and various
+
+33:36
+ways of moving memory between them, and it will dispatch to the
+
+33:39
+correct and most optimal mechanism possible, and it will work
+
+33:44
+for all types, both built-in types and your own user-defined types.
+
+33:51
+If we take a look again at our heat equation code, our
+
+33:55
+save-to-file function is going to access the entire u-vector
+
+33:59
+on the host, so it's going to be an implicit device-to-host transfer.
+
+34:05
+Instead, we can create a staging buffer in host-only memory,
+
+34:11
+and then we can explicitly copy from our problem state
+
+34:14
+in device memory to the host memory staging buffer with thrust copy.
+
+34:20
+Now, not only is our memory transfer more efficient, but
+
+34:24
+we're also overlapping the compute with the I.O.
+
+34:30
+So our code will first initialize the problem
+
+34:32
+state asynchronously on the device.
+
+34:35
+And then next, we'll enter that outer write loop on the host.
+
+34:41
+And then every write step, we start by copying U to buff.
+
+34:46
+And then we immediately wait on the stream, ensuring that
+
+34:49
+any previous compute and copy have completed before we continue.
+
+34:56
+Next, we asynchronously launch our heat equation solver compute
+
+34:59
+steps times on our stream.
+
+35:04
+And then on the host, we start outputting the staging
+
+35:07
+buffer at the same time as those heat equation solves
+
+35:10
+are happening on the GPU.
+
+35:14
+And then we repeat this every iteration of the outer write loop.
+
+35:21
+So we've only talked about a few of the many CUDA-accelerated
+
+35:24
+libraries today, but there's many more to explore, including
+
+35:28
+math, machine learning, data science, simulation, physics,
+
+35:32
+I.O., networking, and device-side programming libraries.
+
+35:36
+If you want to learn more about what's available,
+
+35:39
+We have a whole track of CUDA developer content at GTC this year.
+
+35:44
+Right after this talk, in this same room, my colleague
+
+35:47
+Georgie will be giving a session diving into the more advanced topic
+
+35:51
+of authoring CUDA C++ kernels.
+
+35:55
+We also have a talk that's corresponding to this one.
+
+35:58
+That's the CUDA Python Developers Toolbox, and we have a talk
+
+36:03
+on CUDA Python kernel authoring, which I believe was yesterday, but
+
+36:06
+you can watch the video on demand.
+
+36:09
+We're also launching a whole new CUDA curriculum with
+
+36:12
+tutorials, notebooks, and other learning materials which
+
+36:15
+you can find on our accelerated computing hub on GitHub.
+
+36:21
+So I want to acknowledge all my colleagues who are behind
+
+36:24
+the technologies that we've covered here today.
+
+36:26
+When I first started working at NVIDIA in 2017 and founded the
+
+36:30
+CUDA C++ core libraries team, I was the only one of only a few people
+
+36:35
+in CUDA working on modern C++.
+
+36:37
+And today we have a whole team working on the CUDA C++
+
+36:41
+developers toolbox led by Jake and Georgie over here.
+
+36:45
+And I think that is it.
+
+36:48
+I think we can switch over to some questions now.
+
+36:52
+All right, thanks, Bryce.
+
+36:56
+If anyone has any questions, go ahead and just raise your hand,
+
+36:58
+and I'll come over with the mic.
+
+36:59
+Got one over here, come back to you.
+
+37:08
+Very nice.
+
+37:09
+Can you give a little more details on what memory
+
+37:12
+over-subscription is?
+
+37:15
+If you create a, you know, let's say you have a GPU that has one
+
+37:18
+gigabyte of memory, but you have, you know, four gigabytes of data
+
+37:22
+that you want to process, right?
+
+37:24
+So you create a thrust universal vector that you fill in with
+
+37:27
+four gigabytes of data.
+
+37:28
+And then you launch a kernel that's going to stream through
+
+37:31
+that universal vector.
+
+37:33
+And so what'll happen is, even though that entire universal
+
+37:37
+vector can't be migrated at once to the GPU, and you could write
+
+37:40
+code yourself that would do the streaming and the buffering, but
+
+37:42
+that's a little bit more complex.
+
+37:44
+What'll happen in this case is just that as your kernel starts
+
+37:47
+accessing different parts of that universal vector, it will get moved
+
+37:52
+to the GPU, and as the GPU reaches its memory capacity, it'll then
+
+37:57
+go and evict things that are, you know, parts of the universal vector
+
+38:00
+that are no longer being accessed.
+
+38:02
+And you can even do things with, there are prefetching APIs.
+
+38:06
+So you can say, hey, I'm about to use this part next.
+
+38:09
+There's all sorts of tricks that you can use.
+
+38:11
+So it's one of the big use cases for universal memory
+
+38:15
+is if you've got a problem that won't fit into your GPU
+
+38:18
+memory space, universal memory, or I should say unified memory,
+
+38:22
+makes it a lot easier to program.
+
+38:43
+So, for the unified memory, you move around the data between
+
+38:50
+the host and device.
+
+38:55
+Would I get a performance hit if I...
+
+38:58
+Doing that kind of stuff on like a Jetson type of thing,
+
+39:05
+you know, the processor and the GPU share the same physical memory?
+
+39:10
+This is a good question, and this is another one of the
+
+39:12
+arguments in favor of unified memory, which is that like on some
+
+39:18
+platforms, the CPU and the GPU may share the same memory space, like
+
+39:23
+on some of our embedded platforms.
+
+39:24
+On other platforms, like our...
+
+39:27
+NVIDIA CPU, NVIDIA GPU, I used to be able to say Grace
+
+39:30
+Hopper, but now we don't have an easy word for that, but on
+
+39:33
+those platforms, we have hardware support for doing the migration
+
+39:38
+that's very, very fast, and the CPU and the GPU can actually
+
+39:42
+see each other's memory and access each other's memory natively.
+
+39:46
+But those Jetson platforms are a different case because
+
+39:48
+it's actually the same memory for CPU and GPU, and the answer is yes.
+
+39:51
+There are some cases where, if you're on that particular platform,
+
+39:55
+It may be better to just use unified memory because you
+
+40:00
+might be incurring a cost of an explicit copy that you don't want.
+
+40:04
+Like if you think about it, if the CPU and the GPU are
+
+40:06
+accessing the same memory space and you're copying from
+
+40:09
+GPU memory to CPU memory, what you're doing is you're just
+
+40:11
+copying from one place in memory to another place in memory, which
+
+40:14
+means you're using more storage and you're doing this memory movement
+
+40:17
+that you might not actually need.
+
+40:19
+There are some caveats with those embedded platforms.
+
+40:24
+In particular, there's some caveats around how synchronization
+
+40:27
+and atomics work historically.
+
+40:29
+I don't know what the current state of that has been, so you've got
+
+40:32
+to be careful in some cases there.
+
+40:34
+But the other thing to remember is that there's actually
+
+40:36
+a great diversity of different types of NVIDIA GPUs and
+
+40:40
+different configurations of NVIDIA GPUs and CPUs.
+
+40:43
+And, you know, different operating systems have different levels
+
+40:46
+of support for these different, you know, memory systems.
+
+40:50
+Like on Windows today, you'll get a different experience with unified
+
+40:54
+memory than you would on Linux.
+
+40:56
+And so you have to, if you want to write CUDA code that's
+
+40:59
+going to run in a bunch of different places, you've got
+
+41:01
+to think carefully about this.
+
+41:03
+If you're just programming on one particular environment,
+
+41:06
+like the Jetson environment,
+
+41:08
+You might want to structure your memory movement a little
+
+41:12
+bit differently to take advantage of that platform's
+
+41:14
+unique capabilities.
+
+41:15
+So do I even need to do the memory copy on the Jadrim platform?
+
+41:22
+Do you not know the answer to that?
+
+41:24
+I think there are going to be some cases where you do not, and
+
+41:26
+there will be some cases where you might need to do that, where you
+
+41:29
+might need to do an explicit memory copy, in particular if you're doing
+
+41:32
+things around synchronization.
+
+41:35
+I think that there are certain, even though it's all the same
+
+41:37
+memory space, there's certain types of, certain parts of
+
+41:40
+that memory that are usable for different things.
+
+41:43
+I don't know the answer to that.
+
+41:44
+Georgie, do you know the answer to that?
+
+41:47
+I think that on modern Jetson platforms that, yeah, there's
+
+41:50
+a lot of cases where you should not need to do the copy.
+
+41:54
+Okay.
+
+41:55
+Second question.
+
+41:57
+I think I probably missed it.
+
+41:58
+So, you know, the old way of doing, we initialize the CUDA kernel,
+
+42:04
+we have the number of threads, the number of blocks, and then,
+
+42:10
+you know, and then the streams.
+
+42:11
+I see the streams here, but what happened to the...
+
+42:18
+Right, so that is, I would say, a more advanced topic, and
+
+42:23
+the way that we want to introduce people to CUDA programming
+
+42:26
+now is with algorithms and libraries first, and then
+
+42:31
+these algorithms and libraries will decide the block sizes for you.
+
+42:35
+And you should only worry about things like block size if you've
+
+42:39
+used these libraries benchmarked and found that you're not getting
+
+42:41
+the performance that you need.
+
+42:43
+And something like Georgie's talk will talk more about what
+
+42:46
+you can do if you reach that point.
+
+42:48
+But I think the short answer is, in most cases, you shouldn't
+
+42:51
+be thinking about that because you should be using some existing
+
+42:54
+algorithm that has some tuning that will pick the block sizes.
+
+42:58
+With CUB, you can create your own tunings that explicitly
+
+43:02
+pick the block sizes.
+
+43:03
+I should also mention on the memory transfer case that
+
+43:06
+this is covered in the accelerated computing hub tutorial.
+
+43:09
+I didn't have time here to go into the more advanced version
+
+43:12
+of this example where you actually have another staging buffer where
+
+43:15
+you do a device-to-device copy.
+
+43:18
+Which is faster than a device to host copy.
+
+43:20
+And then you do the device to host copy on a separate stream.
+
+43:24
+So you overlap the device to host copy with the compute.
+
+43:28
+If you're interested in learning more about those sorts of tricks,
+
+43:32
+go check out the Accelerated Computing Hub C++ tutorial.
+
+43:35
+It's in the second part.
+
+43:44
+What is the difference?
+
+43:49
+Right, what is the difference between universal memory?
+
+43:51
+So first of all, universal memory isn't a thing.
+
+43:53
+Universal vector is just the name we picked for thrust because
+
+43:56
+thrust supports other backends that are not CUDA, so we didn't
+
+43:59
+want to call it unified vector.
+
+44:00
+Also, there were some other naming problems with unified vector.
+
+44:04
+The feature is called unified memory.
+
+44:07
+That refers to the general CUDA capability.
+
+44:11
+On some platforms, we have particular technologies that
+
+44:15
+we use to implement it.
+
+44:18
+On the Grace Hopper platforms, we have this hardware support,
+
+44:21
+which internally, at least, has been referred to as ATS,
+
+44:25
+where there's support in the hardware for the operating system
+
+44:31
+and the GPU system software to be able to page between CPU and GPU.
+
+44:37
+And there's actually a native protocol between the CPU and GPU.
+
+44:41
+There's also a Linux kernel support called HMM for doing this
+
+44:45
+paging on Grace Hopper systems.
+
+44:47
+I think on the Grace Hopper systems, you don't have to
+
+44:50
+page, it just goes through the magical hardware support.
+
+44:53
+On other Linux systems, including x86 and NVIDIA GPU systems,
+
+44:57
+if you've got a new enough Linux kernel, you can use
+
+44:59
+HMM, which will allow the GPU driver to access the page tables.
+
+45:05
+And to be able to page memory between CPU and GPU.
+
+45:11
+I'll make it quick.
+
+45:12
+Yeah, so Bryce, just want to thank you for all of this.
+
+45:16
+Every time I come here, there's always some nugget of information
+
+45:19
+that I get out of this.
+
+45:21
+And that maybe leads me to my question, or I'll say my
+
+45:24
+plea, as documentation is always the bane of any kind of developers
+
+45:31
+of getting stuff out there.
+
+45:33
+Like, there's so much power in what you guys have been doing
+
+45:36
+for the past x number of years.
+
+45:39
+And having a good
+
+45:41
+This way of understanding what's actually available,
+
+45:45
+if I want to do something like this, I can do it like
+
+45:48
+that, here's an example, here's this, whatever you guys can come
+
+45:52
+up with, because it has been...
+
+45:54
+Very difficult, and I say this maybe every year I come
+
+45:56
+here, documentation of what you guys are working on because
+
+46:00
+it's fantastic, right?
+
+46:03
+Yeah, we've been burned on this by the past.
+
+46:05
+I've been responsible for us shipping features without
+
+46:08
+documentation in the past.
+
+46:09
+I'm now a bit of a hard-ass about it.
+
+46:12
+One of the reasons why we're doing this whole CUDA developer
+
+46:15
+track at GTC, one of the reasons why we've got this new learning
+
+46:18
+content, is because we want to do a better job at documentation,
+
+46:23
+and in particular at education.
+
+46:25
+CUDA's been around for a long time.
+
+46:26
+The best practices for CUDA have-
+
+46:28
+Thank you very much for your time, and I'll see you in
+
+46:30
+the next session.
+
+46:46
+The educational material we've refreshed I'm very happy with,
+
+46:49
+the docs themselves for some of these libraries, they still
+
+46:52
+need a bit of work, that's a work in progress, we're working
+
+46:56
+on having more and better examples too, in particular in taking
+
+46:59
+examples from these talks that we give and making sure that they
+
+47:02
+get upstreamed to the libraries.
+
+47:04
+That one's on me.
+
+47:07
+All right, and just one final plug, if you have more questions,
+
+47:09
+Bryce will be at the CUDA Developer Best Practices CWE later today at
+
+47:14
+2 p.m., but that otherwise, let's thanks Bryce, and yeah, move on.
+

@@ -1,0 +1,1832 @@
+Transcript Powered by AI
+
+Getting Started with Multi-GPU Scaling: Distributed Libraries
+
+
+00:02
+Yeah, thank you. Yeah, today we'll talk about how to get
+
+00:08
+started with multi-GPUs and give a bit of an overview of what
+
+00:13
+are the paths that you can take.
+
+00:16
+Typically, if you already have your sequential project
+
+00:19
+and you want to move to multi-GPUs, there are, of course, many
+
+00:23
+paths, and some of them are more challenging than others.
+
+00:26
+I'll try to pick up some of them in this presentation.
+
+00:34
+For some motivation, why multi-GPUs and it might be obvious that
+
+00:39
+with the data growth of this exponential data growth we have
+
+00:43
+been seeing we expect that more and more we'll have to use multi-GPUs
+
+00:48
+in order to handle this data.
+
+00:51
+Of course the memory on GPUs increases but in many cases
+
+00:57
+it won't keep up with the growth of the problem sizes.
+
+01:02
+So yeah, you would need to use multiple GPUs just in
+
+01:04
+order to have enough device memory to handle your problems.
+
+01:09
+And of course, another thing is you can decrease the computation
+
+01:13
+time, and often you would have to use multiple GPUs for that as well.
+
+01:19
+But I think primarily it's because of the data size just
+
+01:22
+keeps increasing.
+
+01:26
+If we go back in history and look at when CUDA started,
+
+01:32
+in a single GPU case, what happened was CUDA was introduced,
+
+01:37
+and people were starting using CUDA for small areas in their code, so
+
+01:41
+they had some bottlenecks, and they would optimize for that bottleneck.
+
+01:46
+Have your program running primarily in GPU, in main
+
+01:49
+memory, and then you've got some areas of code that you want, oh,
+
+01:53
+I can optimize that, re-implement that in CUDA, move it back
+
+01:57
+to the GPU and do the work there.
+
+02:00
+And later you had libraries saying, oh, this library
+
+02:02
+is CUDA-accelerated, and you can use that.
+
+02:06
+But the main gate between the libraries were primarily CPU.
+
+02:10
+And CPU memory, and so we would have a flow like this
+
+02:13
+where you start with some I.O., CPU did some parsing of that I.O., and
+
+02:19
+then hand it over to CUDA and to device memory, and then probably if
+
+02:24
+you wanted to use another library, you would go back and forth, so
+
+02:26
+you would have this back and forth between device and host memory.
+
+02:31
+But nowadays, this single GPU ecosystem has evolved
+
+02:35
+to a case where we have a broad range of accelerated libraries
+
+02:39
+and they can talk to each other.
+
+02:41
+So nowadays you can access the files, move them directly into
+
+02:46
+the device memory, bypassing more or less the CPU completely, and
+
+02:50
+do all the work on device memory.
+
+02:54
+And even if you're using multiple libraries, those might often
+
+02:58
+have zero-copy compatibility, so you can just hand over
+
+03:00
+data from one library to another.
+
+03:04
+Now, going multi-GPU, that ecosystem isn't
+
+03:08
+that evolved for now.
+
+03:12
+So, we are more or less back to the start where you can
+
+03:15
+read in, again, in a CUDA-executed library using multiple GPUs.
+
+03:22
+But if you want to use other distributed libraries, you
+
+03:26
+often have to do some manual redistribution of data.
+
+03:31
+And that's a big...
+
+03:33
+Issue because that can be very expensive and this is
+
+03:36
+maybe one of the reasons why going to multi-DPUs are very difficult.
+
+03:41
+Or more difficult, at least.
+
+03:43
+But we're hoping that at some point we get to this unified
+
+03:47
+framework where distributed libraries also can talk to
+
+03:50
+each other and be compatible.
+
+03:52
+And I will show in this talk an example of such frameworks.
+
+03:57
+But it's not the general case at the moment.
+
+04:01
+It's still something that has to be evolved.
+
+04:07
+Now, if you want to use multi-GPUs, you have to use some libraries
+
+04:11
+and tools, and so here I've plotted some programming languages for
+
+04:17
+multi-GPUs, and so at the x-axis here you have how domain-specific
+
+04:24
+is the library, how general is it, and on the y you have
+
+04:29
+the productivity or ease of use.
+
+04:31
+So broadly speaking, you want to be up here at the upper
+
+04:34
+right corner where your library is perfectly general and is
+
+04:39
+extremely easy to use.
+
+04:40
+And vice versa, you don't want to be down here where it's very
+
+04:43
+specific and it's very hard to use.
+
+04:47
+I should say that these different examples of libraries I've
+
+04:50
+plotted in here are...
+
+04:51
+Their location on the plot here is fairly subjective.
+
+04:55
+I assure you if you ask the individual developers, they
+
+04:58
+might disagree a bit.
+
+04:59
+But the whole idea here is just to say that we have this diagonal
+
+05:04
+of different libraries where you have to, there's a trade-off
+
+05:09
+between how general is it and how productive, how easy to use.
+
+05:18
+Today, in this talk, we will focus on these more high-productive,
+
+05:24
+higher-level abstraction libraries.
+
+05:29
+And we'll be talking about the QPyNumeric and Dask-cuDF
+
+05:33
+and give some examples of also some of the others.
+
+05:37
+The next talk at 9 a.m., also in here, Monoliths will talk
+
+05:42
+about a more lower level, less abstract program model
+
+05:47
+where you get more control.
+
+05:49
+But also arguably a bit more difficult, a bit of work to do.
+
+05:54
+And then finally, Jiri will talk at 10 a.m.
+
+05:57
+about the more raw communication libraries, so where everything
+
+06:03
+is much more explicit.
+
+06:06
+And of course, these libraries work together, and so you
+
+06:09
+will often see that the more high-level libraries use the
+
+06:13
+low-level libraries for its communication and orchestrating
+
+06:16
+of the data distribution.
+
+06:22
+Another way to categorize these different parallel libraries
+
+06:26
+are their data parallelism if it's explicit or versus implicit.
+
+06:33
+And that's probably one of the main questions you would
+
+06:35
+have to ask yourself if you want to use multiple GPUs.
+
+06:40
+What model do you want to program in?
+
+06:42
+In the explicit case, the framework exposes the parallelism
+
+06:48
+to the user, to the programmer.
+
+06:51
+And so you often have some kind of SPMD-style programming,
+
+06:55
+some MPI-style programming, where you have multiple processes,
+
+06:58
+typically one per GPU, and then, as a programmer, you
+
+07:02
+know that your program is running on each process, and you would have
+
+07:06
+to orchestrate and do communication between those processes.
+
+07:11
+And the advantage of that is, it forces the data distribution
+
+07:15
+and parallelization
+
+07:19
+So the program would have to know how my data is distributed,
+
+07:24
+and that's a good thing in the sense that that makes it easier
+
+07:29
+to be compatible or make compatible with existing libraries and
+
+07:35
+the ecosystem of existing, so to say, MPI ecosystem, which is huge.
+
+07:42
+Now, the downside is that you would have to learn this program
+
+07:46
+model, and you would have to be more or less an expert in MPI or
+
+07:49
+something similar in order to use.
+
+07:53
+In an implicit case, we are moving most of the
+
+07:57
+parallelization to the library.
+
+07:59
+And so the user won't have to worry about that.
+
+08:02
+That's great because you get this sequential control flow that
+
+08:10
+as a programmer you write as if you were writing sequential operations.
+
+08:13
+So basically a sequential program and it's the job of the
+
+08:17
+library or framework to infer data parallelism from those operations.
+
+08:24
+That makes it hyper-productive, and by isolating the programmer
+
+08:31
+from the parallelization, the framework gets a lot more
+
+08:33
+freedom to optimize.
+
+08:35
+It is the framework that decides, the library that decides where
+
+08:39
+data is distributed, and so forth.
+
+08:42
+Now, the downside is that it's hard to reason about performance,
+
+08:45
+because it's not explicit, so you might not know what's going on
+
+08:49
+behind the scenes by the library.
+
+08:51
+And similarly,
+
+08:53
+You might do some operations that seem to be working fine on a
+
+08:57
+single GPU, but when you're scaling up, the performance degrades
+
+09:02
+more than you would expect.
+
+09:07
+Some examples for explicit data parallelism, I have here
+
+09:12
+an example of doing a distributed matrix multiplication and
+
+09:18
+using three different libraries, so the first one we have MPI.
+
+09:25
+And here, I'm just using MPI for Py, so we're writing in
+
+09:28
+Python, and we're using QPy, which is a NumPy accelerated library,
+
+09:36
+so basically NumPy running on GPUs.
+
+09:40
+But since in MPI everything is explicit, so first off you
+
+09:45
+know that this code will be running on each process, and so you have to
+
+09:49
+conceal that, you have to make sure that there's no deadlocks in the
+
+09:52
+communication pattern and so forth.
+
+09:54
+And similarly all the data...
+
+09:58
+In your code here, we'll be pointing to basically local data.
+
+10:05
+It's the job for the programmer to do all of this kind of
+
+10:10
+orchestrating of this computation.
+
+10:13
+In this case here, I have to worry about what range
+
+10:17
+am I in the process, how to divide the world, how am I going to
+
+10:23
+distribute and decomposite my data.
+
+10:29
+I need to initialize some communication patterns, in
+
+10:31
+this case I'm programming a Canons algorithm, which
+
+10:35
+is a block matrix, fairly efficient algorithm where you
+
+10:40
+have blocks in the matrix and then you shuffle those blocks around.
+
+10:44
+But the point here is that everything is manually, the
+
+10:48
+only thing I really get from MPI is that it supports, it
+
+10:52
+is device aware or CUDA aware, so when I provide these CUPAI
+
+10:59
+buffers, MPI will automatically...
+
+11:08
+Handle those device buffers, and so if you're sending from one GPU
+
+11:12
+to another, it will handle that, and that's something that you're
+
+11:16
+able to talk about at 10 a.m.
+
+11:19
+In the second example, we have a QBlast MP.
+
+11:27
+CUDA-XMP is basically BLAS, so this old linear algebra
+
+11:33
+library that are accelerated, so CUBLAS are running on CUDA, and
+
+11:38
+then MP for multiplexing, so it's linear algebra on multiple GPUs.
+
+11:44
+And this one is in C, so it's a bit more...
+
+11:50
+But the idea is the same, now we again have to worry
+
+11:54
+about these grids of GPUs, we have to describe to the library how
+
+12:00
+our data is distributed, we can ask for some buffer sizes we then have
+
+12:05
+to allocate, and then finally we can call this matrix multiplication
+
+12:09
+using these things, right, so you describe what you have, your world,
+
+12:15
+And then the library will handle the matrix relocation,
+
+12:18
+so that will be the black box, that's the abstraction, so we
+
+12:21
+don't really know what's going on inside there, but it just runs, and
+
+12:25
+then it says, oh, now I'm finished, here are the data, and you would
+
+12:28
+have to access those local buffers.
+
+12:33
+And finally, the example is this PyTalk distributed web.
+
+12:37
+PyTorch is a very popular machine learning huge framework, and
+
+12:42
+it also has a distributed version.
+
+12:45
+And that one has this distributed tensors, and you also have
+
+12:48
+matrix multiplication there.
+
+12:51
+And now, we are much more abstracted, or much of the
+
+12:56
+details are abstracted away.
+
+12:58
+We still have this device grid, or it's called some
+
+13:00
+mesh here, but we can just generate some random tensors and
+
+13:05
+do the matrix multiplication, and the diff framework will handle it.
+
+13:10
+So there are different abstraction levels in
+
+13:14
+the explicit data parallelism.
+
+13:21
+If we go implicit data parallelism,
+
+13:25
+one project we're working on is QPynumeric.
+
+13:30
+QPynumeric is basically accelerating NumPy to
+
+13:34
+run on GPU using CUDA and running multiple GPUs.
+
+13:41
+So it's a full package basically.
+
+13:45
+And so here, I have a conjugate gradient solver
+
+13:49
+written as you would write a regular NumPy application
+
+13:52
+running on a single CPU.
+
+13:54
+In order to use QPyNumeric, I'm importing QPyNumeric instead
+
+13:57
+of NumPy, but that's actually the only change I need to do.
+
+14:01
+So in this case, QPyNumeric will infer data parallelism
+
+14:06
+from these operations.
+
+14:09
+So those are all reference to distributed data running
+
+14:14
+on multiple GPUs, and by a lazy aberration of this
+
+14:21
+program, QPanameric can infer data parallelism.
+
+14:26
+And as you know, this is sequential user code, right?
+
+14:28
+So this code, as it runs in NumPy, if you run it in QPanameric,
+
+14:33
+it's running on a single machine, single Python interpreter.
+
+14:39
+And so they're all, it makes it much more productive because
+
+14:43
+all of the parallelization issues, you don't have to
+
+14:47
+worry about deadlocks or how to do communication peer-to-peer.
+
+14:51
+You cannot even do communication peer-to-peer in this at the
+
+14:54
+QPy numeric level.
+
+14:59
+It has control-flow duplication, so this code might actually
+
+15:01
+run on multiple GPUs, but as a programmer, the program model is
+
+15:07
+a sequential one, so you only have to worry about the sequential code.
+
+15:12
+A not-so-fair comparison, you see comparing NumPy, CUDA,
+
+15:18
+Numeric versus NumPy, and it's not so fair because we
+
+15:21
+were comparing a NumPy single CPU execution versus eight GPUs.
+
+15:30
+But it's still interesting, or relevant, because that
+
+15:33
+is something you can get without changing any code, only a few
+
+15:36
+import lines, import statements.
+
+15:40
+And so you might not get as good performance, there might
+
+15:41
+be some more advanced things you're doing, but it's a motivation,
+
+15:45
+at least, to check this out.
+
+15:47
+Because using CUPA and Numeric to check what's the performance,
+
+15:53
+it might be good enough to what you want to do.
+
+15:56
+If you go into a bit more detail, so here I have some
+
+16:00
+fairly trivial examples where we import QPyNumeric, generating
+
+16:05
+two random vectors, but at that point when those commands are
+
+16:10
+executed by the Python interpreter, no computation is happening.
+
+16:13
+So what we'll do is QPyNumeric will track the operations,
+
+16:17
+but won't do any computation as of now at this point.
+
+16:22
+So we can ask for the type, we can do an element-wide operation, just
+
+16:26
+like you would do a normal NumPy, in this case you get a result,
+
+16:29
+we can ask for the shape, and again, the shape is just metadata,
+
+16:32
+we know the shape without doing computation, so that's something,
+
+16:36
+and then at the final state I'm doing a sum of this result,
+
+16:41
+and printing that to the screen.
+
+16:43
+And this is where QPanel says, oh, now we need this scalar
+
+16:47
+value, this sum, to the user.
+
+16:49
+At this point, we need to build the graph that was extracted from
+
+16:55
+Lacey evaluating these operations,
+
+16:58
+apply that to the distributed data.
+
+16:59
+It's up to QPanel to make how it wants to distribute
+
+17:04
+these random vectors, depending on their size, how many GPUs
+
+17:09
+do we have, and so forth.
+
+17:12
+And then, finally, you send the scalar to the Python interpreter
+
+17:15
+and it will be printed out.
+
+17:17
+So that's the program model.
+
+17:21
+And QPyNumeric is part of the Legate ecosystem.
+
+17:25
+It's using Legate as its backend.
+
+17:28
+And that's very valuable because that means anyone using Legate
+
+17:32
+as its backend are compatible.
+
+17:37
+So we have QPyNumeric and that work on other projects
+
+17:40
+like Legate Dataframe, ML, and so forth, all using the same
+
+17:44
+primitives, so all using Legate as its back-end, and that means
+
+17:49
+Legate, if you're running, so for instance, you could take QPyNumeric
+
+17:53
+array, a vector from before, and copy that or move that into
+
+17:57
+a Dataframe column with zero copy.
+
+18:02
+And in fact, if you're using the same primitives, Legate
+
+18:04
+will have a chance to optimize across library boundaries, borders.
+
+18:09
+So one operation in one library and another in another library
+
+18:12
+can be optimized and maybe fused together and stuff like that.
+
+18:16
+So it's very powerful to have these common primitives
+
+18:21
+for your libraries.
+
+18:26
+Another implicit data parallel library I want to talk about
+
+18:29
+is this Dask-cuDF, and Dask-cuDF is a GPU-accelerated pandas,
+
+18:39
+and pandas is a dataframe library that's very popular in
+
+18:42
+Python, and Dask is a distribution of that, so Dask is the multi-GPU
+
+18:47
+part, and cuDF is the acceleration within a single GPU part.
+
+18:55
+And in Dask, what you can do is you can say, by default,
+
+18:59
+it will use pandas.
+
+19:01
+But we have this configuration, and you can define a new backend
+
+19:05
+and say, you know what, I want to use CUDA-X as my primitive
+
+19:08
+instead of pandas.
+
+19:10
+And so all operations will now be accelerated using GPUs.
+
+19:15
+And again, it's running as a sequential code, just like
+
+19:17
+in CUDA-PyNumeric.
+
+19:20
+All the parallelization I inferred by Dask and CUDA-X.
+
+19:26
+In this case, I have some US house prices that, on a
+
+19:31
+remote server, I can do a read CSV, and that will run lazily, so again,
+
+19:37
+nothing happens at this point.
+
+19:39
+Dask is just gathering the operations, and we can do
+
+19:42
+some group by, by state, some price, and calculate the mean,
+
+19:46
+and then we get to compute.
+
+19:48
+And it's at compute that you say, oh, now I need these
+
+19:51
+values to this Python interpreter where I'm running.
+
+19:55
+And they'll have Dask generate this task graph of cuDF
+
+20:00
+operations and yeah.
+
+20:07
+Yeah, and then, in this case, moving this mean back to the
+
+20:11
+Python server and print the result.
+
+20:13
+So, very similar to QPyNumeric.
+
+20:15
+It's a bit more explicit because now you have to say compute,
+
+20:18
+but, I mean, there's very minor things you have to do.
+
+20:24
+Dask-cuDF is quite good at memory spilling, so it will
+
+20:28
+automatically move data from GPU to host memory, or from host to
+
+20:33
+disk, based on your memory limits.
+
+20:35
+So either you have some threshold, say you want to use this much
+
+20:37
+memory, or it will do that automatically if it would
+
+20:41
+otherwise run out of memory.
+
+20:46
+And also a bit, not so fair comparison here, we are looking
+
+20:50
+at a Nemo Curator, which is a pre-processing to LLMs.
+
+20:56
+It does some deduplication of tokens or passing input,
+
+21:02
+basically before generating tokens.
+
+21:05
+And by using Dask combined with cuDF, they are able to
+
+21:10
+get very good performance.
+
+21:13
+Again, it's not so fair comparison.
+
+21:14
+We're comparing with a CPU library.
+
+21:17
+But the whole trend is that it doesn't require too much work.
+
+21:21
+You can accelerate your code.
+
+21:26
+And Dask-cuDF is also part of an ecosystem, so here we have the
+
+21:32
+Dask DataFrame, there's also Dask SQL, XGBoost, and a lot of others.
+
+21:39
+It's actually a quite broad ecosystem, Dask, and most
+
+21:42
+of them, or many of them, have accelerated CUDA backends.
+
+21:52
+Now, when you go the implicit route, what do you do if
+
+21:59
+it's not perfect?
+
+22:00
+What do you do if the framework can't handle your problem?
+
+22:06
+And the first thing people put into these common pitfalls were...
+
+22:13
+You're programming as if it was sequential, so there might be some
+
+22:18
+pitfalls that you get into because you're thinking in sequential code,
+
+22:22
+and that's kind of the problem when you do everything implicit.
+
+22:30
+So one example here, so this example is from QPynumeric,
+
+22:36
+so one here you have avoid loops with indexing, that's, if you're
+
+22:39
+a Python programmer and using NumPy, you will know this, that
+
+22:43
+if you have an array, you shouldn't use Python loops to iterate
+
+22:46
+through that array, right, you should use NumPy operations, and
+
+22:50
+the same goes for QPynumeric, you should use QPynumeric operations.
+
+22:54
+So in this case here, instead of extracting part of Y and
+
+22:58
+moving it into X, we can use NumPy's slicing semantic to get
+
+23:06
+this single array operation, and that means QPy and Omega will know
+
+23:12
+how to do that operation in one go.
+
+23:16
+Another thing is advanced indexing.
+
+23:18
+That's a bit more tricky, and that might not be obvious
+
+23:20
+for a programmer, is if you have, say, you have an array,
+
+23:24
+and now you want to find all the indices where something is true,
+
+23:27
+for instance, that H is negative,
+
+23:31
+that means that's a perfectly fine thing to do on a single GPU.
+
+23:37
+Because you get this out-result of indices, then you take
+
+23:41
+those indices and you can index with them, right?
+
+23:44
+That seems fairly reasonable, but it turns out that if you
+
+23:48
+do that in a distributed setting, it's much more difficult to cure
+
+23:51
+Pyramid to do this efficiently, because now it has to produce
+
+23:55
+these indices, and that will be a new array distributed between
+
+23:59
+many GPUs, and so you end up doing much more communication than you
+
+24:03
+would do if it was a single GPU.
+
+24:05
+So that's something that, oh, in this case, they are
+
+24:07
+recommending, ah, you should use boolean mask instead.
+
+24:13
+And finally, an example here is if Dask-cuDatameric is
+
+24:16
+compatible with NumPy, it's also compatible with SciPy.
+
+24:20
+So what you can do is, I want to do a Cholesky decomposition.
+
+24:24
+You might say, I know SciPy, I'm just going to use SciPy to do that.
+
+24:28
+And it works.
+
+24:30
+But it means now the matrix here, which can be huge and
+
+24:34
+distributed, will have to be gathered automatically by
+
+24:37
+QPyNomec, but still will be moved back to one GPU, and even in this
+
+24:42
+case the CPU, to do the operation.
+
+24:45
+And so if you don't have enough space, enough single GPU,
+
+24:47
+it will just fail.
+
+24:48
+And if you have enough space, it might be very slow.
+
+24:50
+So that's a pitfall.
+
+24:53
+In this case, it's fairly easy.
+
+24:56
+QPyNomec actually has a Chaletsky, so you can just use that,
+
+24:58
+and then it works perfectly.
+
+25:07
+What happens if, okay, so you avoid these pitfalls and
+
+25:10
+now you're using CUDA Panameric, but for some reason, either there's
+
+25:16
+something that doesn't support it, so you don't have that operation
+
+25:19
+you want to do, or the performance you're seeing is just horrible.
+
+25:25
+And so what you can do is, there are...
+
+25:28
+Two approaches, basically.
+
+25:29
+The first one is to, as we did before, interpret QPy
+
+25:33
+numeric arrays as regular arrays.
+
+25:35
+And it didn't even support QPy, so down here, again,
+
+25:40
+we have these vectors.
+
+25:42
+I can say, interpret this vector as a QPy array, and
+
+25:46
+it works perfectly.
+
+25:47
+I get our local vector, I can do my local operation, and that,
+
+25:51
+in this case, prints the song.
+
+25:53
+But again, because we're doing a distributed setting, it
+
+25:56
+will have to move this vector that might be large.
+
+26:00
+If it's small, it's fine, but if it's large, you have
+
+26:02
+to move that to a single GPU and do the operation.
+
+26:06
+So, to get good performance, you would have to bypass QPyNRX
+
+26:13
+and use QPyNRX's backend, Legate.
+
+26:17
+So this is the same operation, but now I am defining a new
+
+26:22
+task that are Legate tasks that Legate knows how to distribute.
+
+26:29
+Manolis in the next talk will go into more detail here,
+
+26:34
+but just to give a feeling, I have the same orations,
+
+26:37
+I can do this vector thing,
+
+26:40
+and then I can call my custom task, and I define this task saying,
+
+26:46
+oh, I want this to run on a GPU.
+
+26:50
+I get to have these input and output arrays, and you
+
+26:53
+can even add constraints and a lot of semantics to define
+
+26:58
+how this task wants its input.
+
+27:00
+But when that's defined, that task can run across multiple
+
+27:04
+GPUs, and it's compatible with all the other operations in Legate.
+
+27:11
+So if you're stuck, it's possible to get around that by writing
+
+27:16
+your custom code.
+
+27:18
+But of course, it's more difficult, right?
+
+27:19
+Now you have to know more about how Legate works.
+
+27:23
+So that's kind of the trade-off.
+
+27:27
+For Dask-cuDF, it's the same thing.
+
+27:32
+We can again fall back to a single GPU using compute.
+
+27:36
+So in this case, I have this local data frame.
+
+27:40
+Give me a copy on my local execution, this Python interpreter,
+
+27:44
+and it will work fine.
+
+27:46
+But if I want good performance, if the data frame cannot fit
+
+27:50
+my single machine, I can write, again, a custom task.
+
+27:56
+And this map partition, in this case, basically what you're
+
+27:59
+saying is, please run this task on each block in my data frame.
+
+28:10
+Again, more detail of these tasks, Manolis will talk about
+
+28:15
+in the next talk.
+
+28:19
+So, to sum up, what framework should you use if you want
+
+28:25
+to go to multi-reviews?
+
+28:28
+The good news is that it's not multi-inclusive.
+
+28:30
+You can combine abstractions levels at that...
+
+28:38
+We'd probably recommend going from the highest extraction
+
+28:41
+and start there and see where it fell short and then only at that
+
+28:45
+point write more low-level code.
+
+28:53
+If you look at the explicit data parallel route, it's great
+
+28:58
+if you already know MPI or if you have an existing code base using
+
+29:03
+MPI or something similar, some SPMD model, then explicit route
+
+29:08
+is great because it's fairly easy.
+
+29:15
+It should be okay to create and make them compatible, basically,
+
+29:19
+and maybe even support zero copy.
+
+29:21
+And if you have to do a reshuffling or reinterpreting of data, you
+
+29:27
+know MPI, so you can do it, right?
+
+29:28
+So you have the tools using MPI, or what SPMD model you're
+
+29:33
+using, you have the tools to redistribute the data.
+
+29:40
+And typically, you would also probably get the highest
+
+29:44
+performance, depending on how good you are at the program, of course.
+
+29:50
+Now, the implicit route, if you want high productivity,
+
+29:54
+if you run a sequential code, all the bugs associated with
+
+29:58
+parallel programming, it's not possible to do, right?
+
+30:00
+So, that's such a huge thing.
+
+30:03
+Going from a single to multi-diffuse, all the
+
+30:06
+complexity of sending stuff from one process to another,
+
+30:11
+synchronizing all that, logs and all that, is completely gone.
+
+30:15
+Everything is inferred and handled by the framework.
+
+30:20
+And a very obvious case is if you have an existing, say,
+
+30:24
+in this case, for QPyNumeric, if you have a NumPy application
+
+30:29
+and you're happy with that, then you maybe accelerate
+
+30:31
+that using QPy, then the next step could be to try QPyNumeric.
+
+30:35
+And with very little code, actually there is a custom
+
+30:38
+launcher where you don't even have to change anything.
+
+30:41
+You can try it out and see what's the performance.
+
+30:44
+There might be some performance issues in some operations,
+
+30:46
+or there might be some operations that you don't support, a coupon
+
+30:49
+make doesn't support, but then you have to look into the custom task.
+
+30:54
+But just know that even if you're stuck in something
+
+30:57
+that doesn't exist, it is possible.
+
+31:00
+There is an escape hatch.
+
+31:01
+You can write your own custom task.
+
+31:05
+It's also great for implicit data parallelism for larger
+
+31:08
+projects, it's nice because you can abstract the different groups, so
+
+31:14
+you have your domain experts that are primarily using the library and
+
+31:18
+developing tools for data analytics or whatever, you can isolate them
+
+31:24
+from the parallelization typically.
+
+31:28
+Computer science experts,
+
+31:31
+and have the library handle that parallelization.
+
+31:36
+So that makes it very powerful for maybe not if you have
+
+31:40
+a team of domain experts and parallelization experts.
+
+31:46
+Yeah, I would point some examples down here.
+
+31:48
+And other than that...
+
+31:52
+This is part of the CUDA Deload sessions.
+
+31:55
+There are some other vlogs for how to use CUDA, how to go multi-GPU.
+
+32:14
+I think we have some time for a few questions.
+
+32:18
+Would anybody like to ask?
+
+32:19
+Okay, right here.
+
+32:25
+Congratulations on your presentation first and foremost,
+
+32:29
+as convenient as this implicit thing is, can I ensure in
+
+32:37
+some degree that it is running on multiple GPUs?
+
+32:42
+There are some safeguards, or can I check the number
+
+32:45
+of nodes that it's connected to, the number of GPUs the
+
+32:48
+job has been distributed to?
+
+32:49
+Yeah, so that depends, of course, on the framework, right?
+
+32:53
+QPynumerics.
+
+32:55
+Yeah, so both Dask and QPynumerics has a broad range of profiling
+
+32:59
+tools and monetization, so you can see stuff like that.
+
+33:05
+Of course...
+
+33:06
+If you're just using CUPA and numeric, and you're not
+
+33:08
+providing any information, you're only providing how much memory
+
+33:11
+will be used and how many GPUs, how exactly that is distributed
+
+33:15
+is up to the library, right?
+
+33:17
+I just want to be sure that the users are not taking a
+
+33:21
+day to run because they don't know it's running in a single...
+
+33:24
+In that case, there are some tools to do that.
+
+33:30
+Again, great talk, my name is Prit Banerjee, I'm CTO
+
+33:33
+at ANSYS, ANSYS does a lot of work on GPU acceleration
+
+33:39
+with, we've actually taken our fluent CFD code and parallelized
+
+33:44
+with multi-GPUs using MPI.
+
+33:48
+The question I have is, Jensen in his keynote speech talked about...
+
+33:54
+Grace Blackwell and the coherent shared memory that is existing
+
+33:58
+now in the past as your first slide showed you have to do
+
+34:02
+mem copy from your CPU memory to GPU memory it's very ugly with all
+
+34:07
+the NVLink and all the latest stuff that is happening between coherent
+
+34:10
+shared memory apparently it looks like this is a memory on the CPU
+
+34:17
+and you just do a pointer and you do whatever computation so it is
+
+34:21
+Becoming ease of use.
+
+34:23
+So the question I want to ask you is, I'm not talking
+
+34:28
+about using CUDA library, I know this is library talk,
+
+34:31
+but in terms of can I use that coherent shared memory as like
+
+34:39
+a distributed shared memory, you know those machines like Kendall
+
+34:42
+Squares used to be there, I assume you are familiar with it, right?
+
+34:45
+Yeah. And get up to 80% of a performance
+
+34:52
+of a hand-coded, multi-GPU MPI implementation.
+
+34:57
+Are you getting my question?
+
+34:58
+Yeah, so if, so the question is, if you, if you, How automated
+
+35:04
+is coherent shared memory?
+
+35:05
+So it's true that this new architecture has this unified and
+
+35:09
+coherent memory, so the host memory and device memory can access both,
+
+35:14
+and the GPU can access directly.
+
+35:16
+But to get good performance,
+
+35:19
+In your program, you would have to somehow tell the runtime system
+
+35:22
+that what you're doing, the memory patterns, your access pattern.
+
+35:28
+Otherwise, performance won't be good.
+
+35:31
+And that is more drastic if you're going to access remote memory.
+
+35:35
+So I think it's a way to get started, but it's probably
+
+35:41
+something that you would have to, while developing, you would
+
+35:45
+have to give hints of prefetching.
+
+35:48
+You can drop pages now in the new CUDA-CUDA.
+
+35:51
+Stuff like that where you're basically telling the quantum
+
+35:53
+system, oh, now I'm accessing some remote that should be prefixed
+
+35:57
+and not wait until my critical loop in some kernel, because
+
+36:02
+that's going to be horrible.
+
+36:04
+So it still requires a lot of work, even though it's all unified.
+
+36:11
+Any other questions?
+
+36:14
+Thank you for your nice talk and can you mention a little
+
+36:17
+bit more about a performance comparison between explicit method
+
+36:22
+and implicit data parallelism and like of course it depends
+
+36:26
+on algorithm and yeah problems but yeah so so it's
+
+36:31
+It's hard to generalize, but of course, if I'm doing something
+
+36:35
+explicit, I can always mimic and do the same that, so for
+
+36:39
+instance, QPyNumeric.
+
+36:40
+So if QPyNumeric is doing something or Legate is doing
+
+36:43
+something, I could do the same thing if I'm rewriting that in
+
+36:47
+MPI or NVSHM or some other library.
+
+36:51
+But the question is, can you do that, or how much
+
+36:54
+work will it take?
+
+36:54
+So that's why, in many cases, explicit are more performant if
+
+37:00
+the program is good and are forced to think about data locations.
+
+37:04
+It's a bit about, it's a bit in relation to the previous
+
+37:08
+question is, if you just let the framework do everything,
+
+37:15
+then it might be tricked into doing something inefficient.
+
+37:20
+So, but this is again where, so in KubePan America at least,
+
+37:23
+you can write your own custom kernels, and those can also, those
+
+37:26
+constraints can force the run-to system to divide and distribute
+
+37:30
+your data in a particular manner.
+
+37:31
+So, so yeah.
+
+37:37
+Hi, Jeff Mulmer from ExxonMobil.
+
+37:40
+You mentioned MPI, but one thing I didn't see there was NICL.
+
+37:43
+Can you talk about MPI versus NICL?
+
+37:46
+Is there ever a case where you would mix MPI and NICL
+
+37:50
+communication libraries?
+
+37:51
+So NICL, for me, it's just very...
+
+37:55
+So basically, it's first off device to device, where MPI
+
+37:59
+is more general both for host and device memory.
+
+38:03
+Niklas has these very nice collective operations.
+
+38:07
+MPI has as well, but I think you can mix them, and the talk at 10,
+
+38:15
+Jiri will talk about more in detail of these communication libraries,
+
+38:20
+what advantages they have.
+
+38:24
+Actually, to add to that, Jiri's talk has been moved
+
+38:27
+to room 230B, down the other side, so he needed a bigger
+
+38:33
+room because the topic is so much more popular, but great question.
+
+38:38
+Any other questions, please?
+
+38:40
+Don't be shy!
+
+38:44
+Yeah, Newman here. Thanks for the nice talk.
+
+38:46
+So, a little bit of a specific question on CUPEye Numeric.
+
+38:51
+Is it sort of topology-aware, like MPI?
+
+38:54
+Can you talk a little bit more about how do you handle
+
+38:56
+sort of distribution, shared memory, et cetera?
+
+38:59
+Yeah, so the program model itself doesn't say anything
+
+39:02
+about that, actually.
+
+39:03
+So as a programmer, if you're using CUDA, it's up to the
+
+39:06
+framework to do the distribution.
+
+39:09
+But then what happens is it does what you would do also
+
+39:13
+in an MPI application.
+
+39:15
+So you have a topology of the GPUs, device, so in this
+
+39:19
+case here, you have some thresholds of how big stuff are, how
+
+39:23
+many GPUs do you have.
+
+39:26
+What it will do and what's...
+
+39:28
+The hard part, but also the clear part is, it will look at the
+
+39:31
+dependencies between your different operations that are generated.
+
+39:35
+And that's why also you need this lazy evaluation, because
+
+39:38
+then you could get more information of what operations.
+
+39:41
+Then it will see, oh, in order to minimize communication, these paths
+
+39:46
+should be the same, or we should need this kind of borderline.
+
+39:52
+And a follow-up, if I can.
+
+39:55
+So, do you do any ahead of time?
+
+39:57
+Or is this entirely sort of like lazily executed?
+
+40:01
+Like, for instance, just to say reduce, sort of like,
+
+40:05
+you know, taking the graph and going through it all.
+
+40:08
+Yeah, so Coupan and Merck will, for instance, reduce,
+
+40:10
+will use primitives in Legate that support reduce.
+
+40:15
+And so you have this, you can build this tree of...
+
+40:19
+So all of these things, all these tricks are kind of the same.
+
+40:23
+So the only problem is if for some reason it doesn't match up.
+
+40:27
+There's also, when we say it's lazy evaluated, but in
+
+40:31
+reality it actually has a front.
+
+40:35
+So there is a maximum number of regions that will be tracked
+
+40:39
+until execution will start.
+
+40:40
+So yeah.
+
+40:49
+I think we have time for one more question.
+
+40:54
+If not, you can meet with Mads outside, too, and he'd be
+
+40:58
+happy to talk to you more closely from a one-on-one perspective.
+
+41:03
+So, thank you for joining the session.
+
+41:05
+Again, the recording will become available within 48 hours.
+
+41:10
+Please, if you want to win a $50 gift card, fill out
+
+41:14
+the survey in your GTC app and give us your feedback.
+
+41:19
+So, really appreciate it.
+
+41:20
+Thank you very much, and thank you, Mads.
+

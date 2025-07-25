@@ -1,0 +1,1949 @@
+Transcript Powered by AI
+
+Build Next-Generation AI Factories With DOCA-Accelerated Networking
+
+
+00:04
+Thank you, Scott.
+
+00:10
+Thanks, everyone, for joining this GTC 25.
+
+00:13
+I hope you're having a lot of fun and enjoying the great
+
+00:17
+stuff that we have for you.
+
+00:18
+I'm super excited to be here with a great team from Google
+
+00:21
+Cloud, and we have tons of stuff to share with you.
+
+00:25
+So let's begin with a short trip back in time.
+
+00:31
+In the evolution of
+
+00:33
+Data centers, starting from software-defined data centers
+
+00:37
+to the accelerated computing data centers, we've learned that
+
+00:40
+AI workloads eventually continue to grow in complexity and scale.
+
+00:45
+This, of course,
+
+00:47
+leads to the need to accelerate the infrastructure.
+
+00:51
+The entire data center becomes the new unit of computing.
+
+00:55
+Networking, storage, orchestration, and security all need
+
+00:59
+to be accelerated.
+
+01:01
+And in order to support that, we've built DOCA to enable
+
+01:06
+the developers and the developer ecosystem to accelerate data
+
+01:10
+center infrastructure.
+
+01:13
+I'm kind of happy to be here four years later because we've announced
+
+01:19
+the first release 1.0 at GTC 21 when it was still virtual, right?
+
+01:23
+We could have not met everyone and be in the same room.
+
+01:27
+Our focus was on offloading, accelerating, and isolating
+
+01:30
+the data center infrastructure on the NVIDIA Bluefield DPUs.
+
+01:34
+And for that, we created our open foundation software
+
+01:37
+framework to secure and accelerate cloud platforms.
+
+01:43
+At that time, the AI builder journey was mainly focused
+
+01:46
+on bare-metal cloud and the gaming cloud.
+
+01:50
+With the introduction of generative AI, we've jumped to the second
+
+01:57
+generation of DOCA, DOCA 2.0.
+
+01:59
+DOCA 2.0 enhanced the DOCA offering.
+
+02:03
+With a lot of new capabilities and programmable I.O.
+
+02:06
+At the same time, with the revolution and the creation
+
+02:09
+of the AI factories, we've actually split the way networks
+
+02:13
+are built from just north-south compute cloud with legacy networks
+
+02:17
+and storage to north-south.
+
+02:20
+covering that and east-west covering the GPU to GPU AI
+
+02:25
+fabric so we have two separate networks and we have the and
+
+02:29
+we've introduced and announced the Bluefield SuperNIC at that time
+
+02:33
+to handle the GPU AI farm GPU to GPU communication and the AI fabric
+
+02:40
+and DOCA started to support that as well in addition we've decided to
+
+02:45
+unify all of our software framework
+
+02:48
+And all of the acceleration that we bring under DOCA,
+
+02:50
+giving the developers a one-stop-shop framework
+
+02:54
+to accelerate the AI fabric.
+
+02:59
+So what you see here is the comprehensive software
+
+03:02
+stack of DOCA 2.0.
+
+03:05
+This is the diagram showcasing all of our drivers and libraries,
+
+03:11
+showing the two pillars of the SDK.
+
+03:15
+On the bottom part is the DOCA drivers with all the
+
+03:18
+capabilities to accelerate networking, storage, and security.
+
+03:21
+And on top of that, we have DOCALibs, the APIs that abstract
+
+03:27
+hardware acceleration, that support multi-generation and
+
+03:31
+backward compatibility.
+
+03:33
+Our DOCAflow is the networking SDK.
+
+03:37
+And I'm excited to invite David to talk more about Google's
+
+03:42
+journey with our DOCA.
+
+03:55
+Okay.
+
+03:57
+Thank you, Ariel.
+
+03:58
+So Google's DOCA use case is to build an AI hypercomputer, and
+
+04:03
+that is where thousands of GPUs are connected together and operate as
+
+04:06
+a single, more powerful computer.
+
+04:09
+We first started working with NVIDIA on DOCA and CX7 NICs
+
+04:13
+for the A3 Ultra version of the hypercomputer based on
+
+04:17
+Hopper 200 GPUs, and it's been a very successful collaboration.
+
+04:23
+I'm going to tell you what we set out to achieve using DOCA,
+
+04:27
+and Valas here is going to tell you how we actually accomplished it.
+
+04:30
+Now, this is a very fast-moving space, so I also want to point
+
+04:34
+out that Google has since announced A4 VMs based on
+
+04:37
+the Blackwell 200 GPU, and A4X VMs based on the Grace Blackwell 200.
+
+04:43
+We're going to talk about how we use A3 Ultra with DOCA,
+
+04:47
+but the same kind of virtualization designs are also used with
+
+04:50
+these other VMs, so you know.
+
+04:53
+So the figure here on the right shows the network for a cluster
+
+04:57
+of thousands of A3 ultra nodes.
+
+05:01
+The ultra nodes are down the bottom there in the gray,
+
+05:03
+and you can see that they're connected to the two different
+
+05:06
+networks Ariel talked about.
+
+05:08
+Each node is connected to a user-controlled network,
+
+05:11
+or a north-south network.
+
+05:12
+That's the purple network.
+
+05:14
+And it's also connected to an AI fabric.
+
+05:18
+That's the or an east-south, east-west network.
+
+05:21
+That's the network shown in green.
+
+05:23
+It's a very high-capacity network.
+
+05:25
+It's rail-aligned and has a non-blocking fabric.
+
+05:29
+DOCA is used inside each of the individual A3 nodes.
+
+05:33
+So let's zoom in and see what's going on there.
+
+05:37
+So here's an A3 Ultra node, and it contains a VM that's
+
+05:42
+running on a server, in this case, an Intel Emerald Rapids.
+
+05:46
+And that is connected to eight Hopper 200 GPUs.
+
+05:52
+The VM is attached to the network using Google Titanium NICs.
+
+05:55
+There's 400 gigs of bandwidth there.
+
+05:58
+And the GPUs are attached to the network using NVIDIA CX7 NICs.
+
+06:02
+Each GPU has 400 gigs of bandwidth there.
+
+06:06
+Since we're a cloud provider, differently than your typical
+
+06:09
+on-prem network, we will virtualize all of the traffic that's
+
+06:13
+going over the network so that each customer only sees
+
+06:16
+their own portion of the network.
+
+06:18
+For the traffic that's coming from the VMs, we do this virtualization
+
+06:22
+with our own titanium NICs, and we're used to doing this.
+
+06:25
+We've been doing this for years.
+
+06:28
+But for the traffic that goes from the GPUs over the CX7
+
+06:32
+NIC, we need a new solution, and for that, we turn to DOCA.
+
+06:37
+The virtualization we need to perform for the traffic
+
+06:40
+over the CX7 is similar to what we do for the virtualization
+
+06:45
+of all cloud traffic that's just coming from VMs.
+
+06:47
+It's just a subset, and it's a subset that's more specialized
+
+06:50
+for the GPU-to-GPU communications, which tend to be more streamlined.
+
+06:55
+Still, the main need is multi-tenant isolation, and that
+
+07:00
+is so that different customers can use the same network without being
+
+07:03
+able to bump into one another.
+
+07:06
+The main mechanism that's used to achieve this isolation
+
+07:10
+is encapsulation, where the cloud provider is able to use
+
+07:14
+the control plane to restrict where you can send information to across
+
+07:17
+the network, who you can reach.
+
+07:19
+The figure on the right here shows the encapsulation we
+
+07:21
+use in the Google network based on the PSP security protocol.
+
+07:25
+It uses end-to-end encryption to provide a strong security
+
+07:28
+foundation of integrity and confidentiality.
+
+07:33
+In Google Cloud,
+
+07:34
+We provide end-to-end encryption for all cloud traffic, whether
+
+07:37
+it's in transit or at rest.
+
+07:39
+And GPU traffic is no exception here.
+
+07:41
+It also gets the same treatment.
+
+07:45
+As well as the isolation, there's a lot more to virtualization,
+
+07:49
+our whole feature set.
+
+07:50
+So as you can imagine, we also need to provide a lot
+
+07:53
+of telemetry to make sure that we can monitor the network and debug
+
+07:56
+it in case anything goes wrong.
+
+07:58
+And other features are important, such as in-service software
+
+08:01
+updates or hitless updates.
+
+08:03
+As we call them, so that as a provider, we're able to
+
+08:06
+update the infrastructure without disrupting the customer
+
+08:09
+jobs that are running on it.
+
+08:11
+And there are many more features.
+
+08:12
+We won't go into all of the details, but just to give you
+
+08:14
+an example, the firewall filtering of traffic on the virtual networks
+
+08:18
+between GPUs is also provided.
+
+08:21
+Now, of course, all of this virtualization needs to be provided
+
+08:26
+by the underlying platform, the trusted node, without...
+
+08:32
+Being inside the virtual machine, the virtual machine needs to
+
+08:35
+be unaware that this is happening.
+
+08:38
+And so to do all of this, we're going to use DOCA and
+
+08:40
+I'll turn over to Valis and tell you how we do it.
+
+08:49
+One, two, three, okay.
+
+08:51
+All right, thank you, David.
+
+08:54
+How do you press next?
+
+08:56
+All right, so my part of the talk will have two sections.
+
+08:59
+The first section will tell you...
+
+09:03
+How you can use Doca to provide your tenant isolation on your
+
+09:06
+network and more of a how we use it at Google, but you
+
+09:09
+can copy this and build your own small cloud service provider.
+
+09:14
+And the second section will focus on how we ship features with Doca.
+
+09:20
+I'll go to a specific one example of Google VPC trace
+
+09:23
+route, and then I'll explain how to ship such features.
+
+09:28
+So let's go back let's let's zoom in even more to to the
+
+09:32
+same node that David presented and let's focus on the network
+
+09:35
+card that you may have on your machine so CX7 network cards
+
+09:39
+or CX8 network cards or any NVIDIA network cards usually they provide
+
+09:44
+physical function and virtual function let's focus on the virtual
+
+09:48
+function first on the virtual function you would have your VM so
+
+09:52
+we map virtual function to the VM
+
+09:55
+And from the customer's perspective, the virtual
+
+09:57
+function provides a view of a NIC as if you had that NIC running
+
+10:03
+on your on-prem environment.
+
+10:07
+The virtual function uses the same Mellanox 5 driver that you would
+
+10:11
+have on a physical function, and you can run the same network stack
+
+10:14
+as if you were running on-prem.
+
+10:17
+On the NIC itself, you have a hardware module called ASAP2, which
+
+10:22
+is advanced switching and packet processing component that allows
+
+10:29
+you to modify the packets, process packets and modify the packets.
+
+10:33
+And so this is the component that we need to use to isolate
+
+10:38
+the customer traffic from the Google network fabric.
+
+10:44
+On the PF, we run DOCA flow SDK.
+
+10:48
+That's where sort of DOCA comes in.
+
+10:50
+DOCA uses physical function to set up these ASAP2 rules.
+
+10:57
+And so this is where our team comes in that build ASAPd
+
+11:02
+daemon that wraps the docker flow SDK to translate Google
+
+11:09
+GCP control plane signals to the packet processing rules
+
+11:14
+to provide the customer isolation.
+
+11:18
+So what is Dockerflow SDK?
+
+11:20
+Let's go to the basics of it.
+
+11:22
+So it's essentially a bunch of C libraries with APIs to
+
+11:25
+create match and action tables.
+
+11:30
+These match and action tables,
+
+11:34
+we can support ACLs, LPMs, and hash match types.
+
+11:41
+The after you match a packet you can do modify mirror and other
+
+11:46
+actions the most powerful action is forwarding to another pipe
+
+11:51
+so you can essentially construct any arbitrary packet processing
+
+11:54
+graph from let's say your VM to the wire or from the wire to the VF.
+
+11:59
+All of the packets first enter at the root pipe and then
+
+12:01
+you from there you can start
+
+12:03
+And process your packets through the graph.
+
+12:05
+And all of this is happening in your network card, whether
+
+12:08
+it's CX7 or CX8 or future NVIDIA network cards.
+
+12:13
+So here is a simple application that will provide you
+
+12:17
+basic VPC overlay.
+
+12:20
+So essentially, you have here
+
+12:22
+either your VF, VM ingress, and you have your wire ingress.
+
+12:28
+So your packets can come from your VM or from the wire.
+
+12:33
+The first thing that you do, you go to the root pipe.
+
+12:35
+And the root pipe can decide what to do with this packet.
+
+12:38
+So in this very, very basic application,
+
+12:41
+We first go to the, if we come from the VF, that means
+
+12:46
+the VM, the root pipe figures this out based on the port ID, and
+
+12:50
+then it can direct us to the part of the graph that goes from, that
+
+12:56
+will direct back into the egress.
+
+12:57
+So from the VF, you go to root pipe, and from the root pipe,
+
+13:01
+you would go to egress PSP stage.
+
+13:04
+In egress PSP stage, we essentially look up the destination.
+
+13:08
+And map this destination to specific encapsulation and
+
+13:11
+PSP keys that we want to apply.
+
+13:13
+And we send on the wire.
+
+13:17
+If you come from the wire, you take the lower part.
+
+13:22
+We first decrypt the packet and verify that its integrity
+
+13:25
+is not compromised.
+
+13:27
+And then after that, you do effectively an ACL where you
+
+13:29
+check whether you're happy with this packet and whether you want to
+
+13:33
+allow this packet to enter the VM.
+
+13:37
+So the question is, if you have this, if you write a simple
+
+13:41
+app, if you want to do customer isolation in your network, how
+
+13:45
+much overhead this would provide?
+
+13:46
+What's the cost of this feature?
+
+13:49
+So first, let's look at the buyer overhead.
+
+13:56
+So the fact that you're doing encapsulation, the fact that
+
+13:59
+you're doing overlay.
+
+14:00
+It means that you have to apply extra headers.
+
+14:02
+David introduced this PSP header.
+
+14:05
+So if you just apply this header on the wire itself, it's about 2%.
+
+14:10
+But what's more important, what we're really happy with
+
+14:15
+when we measured that the latency is very well controlled in
+
+14:19
+these network cards, even when you apply encapsulation and encryption.
+
+14:24
+So if you look at the bar chart here, you see that if you
+
+14:29
+compare unencapsulated traffic with PSP plus encapsulation traffic,
+
+14:34
+at median, you get less than half a microsecond extra latency.
+
+14:39
+What's more important that when you move to the max P100,
+
+14:43
+actually the latency is even lower.
+
+14:45
+So to put this a little bit into the perspective, the
+
+14:50
+overhead of a single switch hop would be more likely more
+
+14:53
+than half a microsecond.
+
+14:55
+So as you grow your network, so this is intra-rack latency,
+
+14:58
+as you grow your network, as your scale grows, the PSP,
+
+15:03
+the overlay encapsulation overheads, they get amortized and
+
+15:07
+you effectively don't feel them.
+
+15:09
+So this is a simple DOC application that you can download yourself and
+
+15:13
+try it and reproduce these numbers.
+
+15:16
+But the question is, what happens in the real Google network?
+
+15:21
+So we have CX7 PSP already in production.
+
+15:24
+A3U Ultra VMs GA in December 2024.
+
+15:29
+When I created the slides around January, back then, the first
+
+15:35
+month of use, we had 100 terabits of bursts, 100,000s of PSP tunnels,
+
+15:42
+and customers were happy and everything is churning really fine.
+
+15:46
+What's more important, when you run end-to-end workloads
+
+15:49
+with this system,
+
+15:50
+What you see is that on the end-to-end applications
+
+15:53
+such as LLama or Mixed Rail training tests, you have
+
+15:59
+almost identical step times to NVIDIA simulated rooflines.
+
+16:03
+So effectively, you don't feel these overheads.
+
+16:06
+And so you can download this application yourself and try
+
+16:09
+it on your own network.
+
+16:12
+Now let me switch to the second part of my talk.
+
+16:14
+So here I showed you how to build a simple cloud service provider.
+
+16:19
+Now the question is when you build it, when you ship this
+
+16:22
+doc application, how do you then add features to it?
+
+16:26
+And what happens when you have a lot of customers, you
+
+16:28
+have a lot of feature requests.
+
+16:30
+So so here I'll go through a one use case that's not any special
+
+16:36
+use case it's just sort of example of use cases that we need to ship
+
+16:42
+very often so let's go to google the pc trace route so what happens
+
+16:46
+very often when your networking person the customer comes
+
+16:49
+to you and says hey my network is broken and there could be a lot of
+
+16:52
+reasons why your network is broken
+
+16:56
+Usually, if you're a network operator, your tool is traceroute.
+
+16:59
+You take a traceroute, packet-level traceroute, and you can
+
+17:03
+traceroute, except that in this case, you have two options.
+
+17:06
+One is hypervisor traceroute, where you run your traceroute
+
+17:11
+from the machine itself, from the hypervisor, or ingest traceroute.
+
+17:15
+The problem with hypervisor traceroute is that you don't
+
+17:18
+exercise customer policies.
+
+17:20
+So if the customer has a firewall that drops your packets, you
+
+17:23
+don't exercise it.
+
+17:24
+And you don't know why the customer packets are lost.
+
+17:28
+Maybe they're lost because of the firewall.
+
+17:33
+The ingest traceroute would be much better because you
+
+17:36
+actually go through all of the customer policies, but
+
+17:39
+we don't have access to it.
+
+17:41
+We have to coordinate a lot of customers to get this traceroute.
+
+17:45
+So we need to come up with something smarter.
+
+17:50
+So what we need to do, we need to inject traceroute
+
+17:54
+probes into the customer VPC network as if the packets
+
+17:58
+come from the guest VM without having access to the guest VM.
+
+18:02
+We have to then detect and intercept these trace packets
+
+18:05
+just before the delivery.
+
+18:06
+And that's a very important point.
+
+18:08
+If you inject packets into customer network and they
+
+18:11
+pop on the customer stack, the customer will be very confused.
+
+18:14
+What are these packets?
+
+18:15
+So we have to intercept these packets and we have to drop them.
+
+18:19
+Well, luckily, the PSP header that we use for our encapsulation
+
+18:26
+has special bits, more or less, for this function.
+
+18:29
+So there's this SMD bit.
+
+18:31
+S is a hint for the receiver to sample.
+
+18:33
+D is a hint for the receiver to drop.
+
+18:36
+So if both are set, then the effect is effectively...
+
+18:42
+On the receiver side, you intercept the packet and send
+
+18:45
+to control plane before you deliver or you don't deliver
+
+18:49
+to VM effectively, right?
+
+18:50
+That's what we want.
+
+18:52
+And so, pleasant surprise, the very first DOCA drop that
+
+18:55
+had the PSP API implementation from NVIDIA, we had these
+
+19:00
+matchers and getters for these packets so we could immediately
+
+19:03
+start working on this feature.
+
+19:06
+Okay, so let's expand our application that we had before
+
+19:09
+that was doing simple VPC and CAP to introduce this trace route.
+
+19:13
+And here we don't have shown VF, VM input, we don't have
+
+19:18
+wire input, I'm just showing the new box which is our ASAPd process.
+
+19:23
+That is injecting these probes.
+
+19:26
+So now the root pipe needs to distinguish between three
+
+19:29
+possible inputs, ASAPd in probes, VM or wire.
+
+19:34
+In this case, if it matches that it's coming from DOCA,
+
+19:37
+then it sets a couple of bits.
+
+19:40
+Then it forwards to a trace part of the graph.
+
+19:44
+In the trace part of the graphs, we set a couple of metadata
+
+19:47
+bits that we then use just before the sending to the wire.
+
+19:51
+We said these bits in the...
+
+19:53
+In the packet header that's already encapsulated so that when it's
+
+19:58
+on the wire these bits are set and on the receiver we can match and
+
+20:02
+intercept this packet correctly.
+
+20:07
+So we have this already in production.
+
+20:09
+This was very, very fast to develop, very fast to add.
+
+20:14
+Actually, this tool itself, we already have it on our
+
+20:17
+other network cards.
+
+20:18
+So we already had UIs.
+
+20:20
+We already had the web and CLI UIs.
+
+20:23
+And it's a mature tool at Google.
+
+20:25
+But the key point here that adding this new network
+
+20:28
+card and integrating with the existing tooling was
+
+20:30
+really easy because of Docker.
+
+20:33
+So now let's say you have these features, and this is
+
+20:36
+just one feature, and this is sort of example of features that
+
+20:38
+we need to keep shipping often.
+
+20:41
+So how do you ship them?
+
+20:42
+So here we come to my final part of my talk, which is
+
+20:45
+how do we hitlessly update Docker?
+
+20:50
+So this daemon, ASAPd, needs updates, right?
+
+20:55
+So what happens if you are very naive of how you update?
+
+20:59
+If you just go and restart a running Docaflow SDK
+
+21:03
+wrapped in your daemon.
+
+21:05
+That will cause connectivity loss.
+
+21:06
+So what's happening there is you close your process.
+
+21:10
+DOCA is torn down.
+
+21:12
+The relevant file descriptors in the kernel are closed.
+
+21:16
+Then the NIC decides that there is no more head program
+
+21:20
+that is managing my resources.
+
+21:21
+I need to clean up the resources.
+
+21:24
+And the flow database in the network card that's managed
+
+21:27
+in ASAP2 hardware module, that database is gone.
+
+21:31
+It's cleaned up.
+
+21:33
+So you essentially, what happens, you essentially, you have
+
+21:37
+Potentially up to 20 second connectivity loss.
+
+21:40
+And this connectivity loss is unacceptable.
+
+21:42
+Because what happens, you lose connectivity, maybe it
+
+21:45
+recovers up to 20 seconds.
+
+21:47
+But what happens, you may have or maybe you
+
+21:49
+will have RDMAQP timeouts.
+
+21:52
+Then your training job will die.
+
+21:54
+And then you'll need to restart from checkpoint.
+
+21:56
+So if you have rolling software updates in a very large cluster,
+
+21:59
+then you can ensure customer prolonged pain and then the
+
+22:03
+customer will call you.
+
+22:05
+So we need something better.
+
+22:07
+So Google and Nvidia sat down together and we said
+
+22:11
+hey let's let's let's fix this and we came up with
+
+22:14
+a headless update process that we
+
+22:16
+that we will show here so we start with again with a network card
+
+22:22
+with ASAPd running and programming your flow database in ASAP2 module
+
+22:28
+you have this root table that comes from the from the outside
+
+22:31
+the screen but it's coming from either VF or wire and your root
+
+22:35
+table and your database decides whether it goes to VF or the wire
+
+22:38
+it's your decision process here
+
+22:41
+So you start with this process.
+
+22:42
+What happens, NVIDIA introduced new APIs so that allows you
+
+22:46
+to add another instance of DOCA.
+
+22:50
+It means that we can have another instance of ASAPd.
+
+22:53
+So now we have two DOCA flow SDKs running at the same time.
+
+22:58
+That manages two different flow databases.
+
+23:00
+They don't manage the same database.
+
+23:02
+The new one will initialize a new flow database.
+
+23:07
+And so what happens then, we transfer business-relevant
+
+23:11
+state, which is in our case would be PSP tunnel state, PSP keys,
+
+23:16
+from the first ASAPd to the second ASAPd, and then we program this
+
+23:22
+whole state into the flow database.
+
+23:26
+So now at this point, we have two copies of our data, both
+
+23:30
+control plane and data plane.
+
+23:32
+And since we have two copies, NVIDIA then another call that
+
+23:36
+atomically allows you to switch to a new flow database.
+
+23:44
+And at that point, the old...
+
+23:47
+Flow database and all the ASAPd, they are not used.
+
+23:49
+You can kill the ASAPd process, it kills DOCA, and it releases
+
+23:53
+all of the resources.
+
+23:55
+So this is the headless update process that Google and NVIDIA
+
+23:59
+developed and we're currently using in production.
+
+24:01
+So what do we have in production?
+
+24:04
+So, we release this ASAPd daemon very often.
+
+24:09
+We build daily.
+
+24:11
+We release at least weekly to staging.
+
+24:14
+And we release at least monthly to production.
+
+24:18
+So, if you guys have new features for Google, you tell us.
+
+24:22
+We develop an ASAPd daemon and then we release very fast.
+
+24:27
+And so, over...
+
+24:30
+I looked at some data, so in November, December, January
+
+24:34
+period, we had 48 staging releases, 4 prod releases,
+
+24:37
+and zero disruption to workloads.
+
+24:39
+And this is sort of just visualizing this over a
+
+24:42
+couple of weeks in October as we're ramping up the machine deployments.
+
+24:46
+Every single version is a different daemon of, different version of
+
+24:51
+ASAPd daemon that uses DOCA flow.
+
+24:55
+All right, so with that, what's the conclusion that CX7, NICs,
+
+25:01
+Power, Google, A3Ultra VMs and the future VMs such as A4.
+
+25:09
+DOCA is crucial for this task.
+
+25:12
+It allows us to deliver features to these network cards.
+
+25:20
+And it has the CSP-grade features such as rich telemetry and
+
+25:25
+hit list updates.
+
+25:27
+And before I hand it back to Ariel, two points.
+
+25:32
+One is shout out to Brent and Elliot, two NVIDIA engineers
+
+25:36
+who really helped us a lot to bring up the stack very fast.
+
+25:39
+So if you guys have them in your call, you're in good hands.
+
+25:43
+And the second one, my team is hiring.
+
+25:46
+If you want, come after the talk.
+
+25:49
+We'll talk about it.
+
+25:50
+Okay, thank you so much.
+
+25:52
+And so, Ariel.
+
+26:00
+Thank you so much, Valas, for sharing your experience and
+
+26:04
+journey and for the great feedback.
+
+26:06
+This is a great partnership.
+
+26:08
+I guess you already know what we do at NVIDIA, right?
+
+26:10
+With DOCA?
+
+26:11
+We accelerate, so I need to accelerate.
+
+26:16
+I need to accelerate.
+
+26:19
+We built DOCA for the AI era, and you see all the work that
+
+26:23
+we have done from DOCA 1.0 to 2.0.
+
+26:27
+And now with the next frontier of AI platforms, we have new
+
+26:30
+problems to solve.
+
+26:31
+We have more compute at inference.
+
+26:33
+We have reasoning.
+
+26:35
+Everybody are talking about that.
+
+26:36
+And we also have solving AI, meaning we need better security.
+
+26:41
+And once we are preparing for that, we thought, hey, we
+
+26:46
+need to introduce a next generation DOCA to support all of these
+
+26:51
+new things and help the AI builders build new types of data centers.
+
+26:56
+And I'm here, proud to announce DOCA 3.0, our next generation DOCA.
+
+27:02
+And you're the first to hear about this.
+
+27:05
+Doca 3.0 is for the hyperscale GPU computing beyond 100K GPUs.
+
+27:14
+We have more and more cloud providers and partners building
+
+27:17
+those huge clusters based on Doca acceleration.
+
+27:21
+I made this.
+
+27:23
+New generation, we need better security with robust
+
+27:26
+threat detection.
+
+27:27
+We are supporting the new intelligent data platforms
+
+27:30
+to accelerate storage and KV cache management.
+
+27:34
+And of course, in order to enable all of that, we need
+
+27:37
+to support infrastructure of the service through orchestration.
+
+27:44
+So we create this infrastructure service orchestration.
+
+27:48
+That will enable to run all the new services that we are
+
+27:52
+creating for intelligent data fabric, accelerated networking,
+
+27:57
+and threat detection.
+
+27:58
+So, DOCA 3.0 powered the next frontier of AI platforms.
+
+28:02
+It's the optimized framework for AI data center infrastructure,
+
+28:06
+which enables the seamless integration and in-depth
+
+28:09
+visibility and security.
+
+28:13
+So, let's quickly run through some of those new services that we have.
+
+28:18
+So OVS-DOCA is our service that enables admins to deploy
+
+28:22
+multi-tenant VPC without the need to develop it all.
+
+28:26
+It is accelerated through DOCA flow with the latest
+
+28:30
+ASAP Square technology and includes support for encryption,
+
+28:35
+whether you're using that for the north-south or for the east-west.
+
+28:39
+And we are talking about unmatched scale performance and connection
+
+28:42
+tracking that OVS-DOCA enables and there is a great session about that
+
+28:48
+and I'm kind of inviting all of you to join that session and learn
+
+28:51
+more on how to power sustainable AI clouds with advanced networking.
+
+28:57
+DocaSnap Virtio-FS is our service for accelerated, high-performance
+
+29:04
+file system storage.
+
+29:06
+The idea is that we are emulating a driver on the host that
+
+29:10
+creates a virtualized file system which is managed on the blue field.
+
+29:15
+So all the logic to the remote storage is offloaded and run
+
+29:19
+on the blue field.
+
+29:20
+And this enables a cloud-scale distributed file system storage.
+
+29:24
+for AI compute service and we see more and more cloud providers
+
+29:28
+looking to deploy that with the benefit of securing the file
+
+29:32
+system through isolation and policy enforcement there's a great session
+
+29:38
+on on the in this GTC on storage so i'm kind of inviting you all to
+
+29:42
+learn more on in that GTC session
+
+29:46
+Another great innovation that I really like and believe there's
+
+29:50
+a great benefit for all through this technology is DocaAppShield.
+
+29:55
+DocaAppShield is a way to offer security for NIMS, the
+
+29:59
+NVIDIA NIMS, and AI workloads.
+
+30:01
+The idea is that it can detect through a service that is
+
+30:05
+running on the Bluefield EPU
+
+30:08
+Threats that are happening on the host.
+
+30:10
+What we do is we are scanning through introspection the
+
+30:14
+host memory, identifying the processes running, containers,
+
+30:17
+VMs, who is talking with whom.
+
+30:20
+And if we identify a threat, that threat is
+
+30:23
+Processed through AI models, for example, the NVIDIA Morpheus
+
+30:27
+or sent to one of our security partners for further processing
+
+30:31
+and with the advantage of doing the enforcement at the level
+
+30:35
+of the network so we can block through services such as OVS-DOCA
+
+30:39
+the threat from spreading out in the network and using virtio-fs in
+
+30:44
+order to protect the files as well.
+
+30:46
+We have a great session on that later today, powering the
+
+30:49
+next wave of AI real-time runtime security, so you're all very
+
+30:53
+much invited to join this session.
+
+30:56
+So I've shared with you three services for networking, storage,
+
+31:01
+and security in order to...
+
+31:05
+Build that, right? You need to provision those
+
+31:07
+Bluefield DPUs and you need to orchestrate those services.
+
+31:10
+You need to chain the different parts.
+
+31:12
+And in order to do that, we created DPF.
+
+31:16
+DPF is DOCA Platform Framework.
+
+31:19
+DPF simplifies the deployment and the chaining of DOCA services
+
+31:25
+and third-party services.
+
+31:27
+And some of you may have seen other sessions of those services
+
+31:31
+running on top of Bluefield DPUs.
+
+31:33
+And you can learn more about this in this GTC session on
+
+31:37
+enabling AI-native networking for Telcos and Kubernetes.
+
+31:42
+So let me recap.
+
+31:45
+TOCA 3.0 accelerates and secure NIMS and AI workloads.
+
+31:51
+It brings the accelerated networking through OVS-DOCA
+
+31:54
+with VPC networking and micro-segmentation.
+
+31:57
+You have AppShield in order to handle the threat detection
+
+32:01
+and automated enforcement and the DOCX-Virtio-FS to
+
+32:05
+create a secure high-performance storage, file system storage
+
+32:10
+offering all of that being serviced and orchestrated through
+
+32:15
+DOCX platform framework, the DPF.
+
+32:18
+Thank you for joining us today and wish you a great GTC and
+
+32:23
+we're here for questions.
+
+32:30
+Hey, thank you.
+
+32:31
+Thank you, Ariel, David, Voss.
+
+32:33
+OK, let's open up for questions.
+
+32:36
+We've got five, six minutes at least here.
+
+32:39
+So OK, question here?
+
+32:43
+Okay, thanks for a great talk.
+
+32:44
+So actually the talk somehow shatters my understanding.
+
+32:47
+So it seems that you guys are applying Doca for CX7
+
+32:52
+and CX7, in my understanding, is actually in the data plane,
+
+32:55
+in the backend of the AI cluster.
+
+32:57
+So does that mean Google is now providing VPC at the backend or
+
+33:02
+the data plane of the AI cluster?
+
+33:06
+Yes.
+
+33:08
+So would that hurt the throughput?
+
+33:11
+I mean, you always think the backend is actually
+
+33:14
+performance critical.
+
+33:16
+So would that kind of VPC hurt the latency or the throughput?
+
+33:20
+I know you show the latency, but I think throughput is more important.
+
+33:24
+Yes, that's right. It's all line rate.
+
+33:26
+Good performance. Valus, you want to elaborate?
+
+33:29
+Yeah, so come to us.
+
+33:30
+We'll show all these lines.
+
+33:32
+You'll see that they match all the roof lines that you can imagine.
+
+33:36
+There's very minimal actual encapsulation overhead, 2%, right?
+
+33:42
+So there's 2%. You're taking it.
+
+33:45
+But latencies are very well controlled.
+
+33:47
+And then all of the, most of the, when you say bandwidth, actually, a
+
+33:50
+lot of these workloads, what really kills them is tail latency, right?
+
+33:54
+So tail latencies is actually the most important one so if you then
+
+33:58
+start going in micro benchmarks maybe you can see a little
+
+34:01
+bit if you squint a lot but if we go to the nickel level benchmarks
+
+34:06
+or end-to-end workload benchmarks they're effectively the rooflines.
+
+34:09
+Okay thank you very much.
+
+34:11
+And just to be clear all of the PSP encryption and everything
+
+34:15
+else it all happens at line rate there's no problem.
+
+34:20
+Just out of curiosity, so how many virtio-functions
+
+34:24
+the Bluefield can support so far?
+
+34:26
+I don't know. I think it's millions or thousands or tens of thousands.
+
+34:29
+Like it's essentially, in our case, as David showed,
+
+34:34
+the VM is a single tenant.
+
+34:38
+So it takes the whole machine.
+
+34:39
+So it has eight network cards, each of them that provides just one VF.
+
+34:43
+In practice, the support is much larger than what we need.
+
+34:46
+Thanks.
+
+34:53
+OK, question here.
+
+34:55
+Are you slicing GPU as well to end customers, or is like
+
+35:00
+one GPU per customer or something?
+
+35:03
+It's the whole machine, and I think yesterday we had a
+
+35:06
+talk about our A4X offerings with GPU200, so I think the
+
+35:13
+plan is that, well, first version of product is the whole machine.
+
+35:19
+I don't know if we're planning sub-shapes, maybe there is
+
+35:24
+some talk about it, but I'm not the one to answer.
+
+35:27
+We wouldn't share GPUs yet, maybe there's plans to.
+
+35:33
+Share a machine so each customer gets a separate GPU.
+
+35:38
+OK, we've got a question here.
+
+35:41
+Does ASAP support older NICs like CX5?
+
+35:46
+That's a question to NVIDIA guys.
+
+35:49
+The ASAP support technology?
+
+35:51
+It does, great.
+
+35:56
+Thank you.
+
+35:58
+I noticed on the slides you mentioned there's a
+
+36:00
+programmable congestion control supported by DOCA.
+
+36:03
+Can you elaborate on that?
+
+36:05
+What exactly the programmable control can do?
+
+36:07
+So, DOCA enables programmable congestion control, and the
+
+36:12
+technology is based on our DPA, Data Path Acceleration.
+
+36:15
+It's part of the DOCA offerings, supported from more advanced
+
+36:20
+devices, so this will be supported as part of the next generation
+
+36:22
+deployments with GB200 at Google.
+
+36:31
+So that's part of what's being now designed so yeah well
+
+36:37
+mostly I'd say stay tuned so we obviously work very
+
+36:40
+closely together on these topics
+
+36:45
+Okay, another question here.
+
+36:49
+If we increase the number of pipes along the pipeline,
+
+36:53
+how does it affect the latencies?
+
+36:55
+Yeah, it does affect, but we were very impressed.
+
+37:00
+If you look at it, it looks a bit crazy because you can
+
+37:02
+stack them, you have huge chains and you start thinking,
+
+37:05
+hey, this can't scale, but it does.
+
+37:08
+So we see, depending on how you structure, from 50 to
+
+37:13
+150 nanoseconds per pipe.
+
+37:16
+So you have to be careful how you structure your pipes and how
+
+37:18
+many you add and make sure that...
+
+37:20
+Your common paths take as few pipes as possible.
+
+37:23
+In the end, the application, as you see, the latency is very low.
+
+37:28
+And that includes also encryption.
+
+37:30
+So on the same line, do we have any limitation on the
+
+37:34
+number of pipes that we can create?
+
+37:37
+I think it's mostly memory issue.
+
+37:39
+Maybe you could go crazy with thousands of pipes, but you
+
+37:43
+want your hot path to have as few pipes as possible.
+
+37:46
+Oh, OK. So thanks.
+
+37:51
+Okay, we got time for about one more question if anyone
+
+37:53
+has one last question.
+
+38:00
+Yeah, so no offense.
+
+38:03
+So we know that Google has its own Titanium.
+
+38:07
+So would Titanium be docker compatible?
+
+38:12
+Is Titanium NIC, DOCA compatible?
+
+38:14
+But for you as a customer, you don't use DOCA, right?
+
+38:17
+It's Google.
+
+38:19
+This is our internal kitchen, right?
+
+38:21
+So in the sense that whether we inside use DOCA on some
+
+38:26
+NIC or don't use DOCA on some NIC, as long as we provide good features
+
+38:31
+for you, that's what would matter.
+
+38:34
+Unless you buy this, unless we start selling this DOCA,
+
+38:37
+this Titanium NIC to you, then you would ask whether
+
+38:40
+the APIs are supported, no?
+
+38:43
+Thank you.
+
+38:45
+Okay. I think that's our time, guys.
+
+38:47
+Thank you so much to our presenters.
+
+38:48
+Great job. We appreciate it.
+

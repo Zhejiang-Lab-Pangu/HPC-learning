@@ -1,0 +1,3090 @@
+How to Write a CUDA Program
+
+
+00:01
+STEPHEN JONES: Hi, everyone.
+
+00:02
+My name is Stephen Jones and I am
+
+00:04
+one of the architects of CUDA.
+
+00:05
+But this isn't any kind of official tutorial from NVIDIA.
+
+00:08
+The GTC people were kind enough to let me do a personal talk,
+
+00:11
+as they've done the last couple of years, actually.
+
+00:13
+So I am continuing what's turning out
+
+00:14
+to be a series of talks which I've
+
+00:16
+given over the last few years about how the GPU is
+
+00:18
+different to the CPU, and how to think about it when
+
+00:21
+you're programming for it.
+
+00:23
+Now, in this one, I'm finally going
+
+00:25
+to look at how I approach building a CUDA program.
+
+00:27
+But obviously, I can't teach you a whole programming
+
+00:30
+model in 45 minutes.
+
+00:32
+And that's not really the point.
+
+00:34
+I think there's a lot of documentation out there.
+
+00:36
+There's a lot of examples out there.
+
+00:38
+I'm not going to walk you through every detailed
+
+00:41
+instruction thing that we call.
+
+00:43
+I'm going to show the ideas and the principles that
+
+00:45
+go behind it, and hopefully, I'll
+
+00:48
+share the code at the end of this,
+
+00:49
+so that you can get to see it.
+
+00:50
+So really, I'm just going to show you how to fake it.
+
+00:53
+This isn't entirely beginner talk,
+
+00:55
+because there's some ninja stuff in here as well.
+
+00:57
+But hopefully, even if you've never seen the CUDA before,
+
+01:01
+you'll be able to follow along with no problem.
+
+01:03
+Now, my problem is that I've been doing CUDA for 15 years
+
+01:06
+now.
+
+01:07
+So how do I put myself in the shoes of someone
+
+01:09
+who's just looking at it for the first time?
+
+01:11
+So what I did was I thought back to when I first
+
+01:13
+encountered CUDA.
+
+01:14
+And I thought I'd walk you through what I did.
+
+01:19
+So this is a timeline of CUDA over the ages.
+
+01:21
+It's not to scale, because I'm not that good at PowerPoint.
+
+01:25
+But I joined CUDA around about here a bit over a year
+
+01:28
+after CUDA 1.0 had been released,
+
+01:30
+around about the time CUDA 2.0 came out.
+
+01:32
+My boss at the time was Ian Buck.
+
+01:35
+And he pointed to my desk and he said, there's your computer.
+
+01:39
+It has a not yet released C10 60 GP unit which
+
+01:41
+was the business back then.
+
+01:44
+Go and do something cool by Friday.
+
+01:49
+Like do something cool by Friday.
+
+01:51
+And remember, I knew nothing about CUDA at all.
+
+01:54
+This was my first day at NVIDIA.
+
+01:55
+It was Monday.
+
+01:57
+But suddenly, I had the fastest graphics card in the world,
+
+01:59
+before it was released as well, which was pretty amazing.
+
+02:03
+So I sat down.
+
+02:04
+I learned a bit of CUDA.
+
+02:05
+I went through literally the steps
+
+02:07
+which I'm going to take you through today.
+
+02:09
+And obviously, the program I wrote itself is long gone.
+
+02:12
+That hard disk, who knows where it is.
+
+02:14
+But I thought I'd recreate it for this talk
+
+02:17
+to walk you through the steps that I took now
+
+02:19
+that I do know about CUDA, and I can walk you
+
+02:22
+through how to write a CUDA program
+
+02:25
+and how to make the decisions that I
+
+02:27
+made with the hindsight of 15 years of knowledge.
+
+02:34
+So here's the program I wrote.
+
+02:36
+It's an infinite landscape generator that you fly over.
+
+02:40
+And this is what we're going to go through
+
+02:42
+in the next 40 minutes or so.
+
+02:45
+I figure that my laptop today has an RTX 2000 inside it,
+
+02:49
+which is a laptop GPU of the ampere generation.
+
+02:51
+The specs are here on the left.
+
+02:52
+It is way faster than the 15-year-old C-1060, which was
+
+02:56
+state of the art at the time.
+
+02:58
+It wasn't even released when I got my hands on it.
+
+03:00
+My laptop will do just fine to recreate
+
+03:02
+this fly through landscape that was my first ever CUDA program.
+
+03:05
+And I'm totally serious.
+
+03:06
+This was honestly the first CUDA program I ever wrote.
+
+03:10
+And how easy it was to pull it together inside of a week.
+
+03:17
+Let's start at the beginning, though.
+
+03:19
+A CUDA program isn't necessarily a program written entirely
+
+03:22
+in the CUDA C++ language.
+
+03:24
+In fact, we're going to try really
+
+03:25
+hard to write as little CUDA as we possibly can.
+
+03:29
+Let me walk you through what CUDA is.
+
+03:31
+Because typically, when someone says CUDA,
+
+03:33
+they're thinking of the CUDA C++ language,
+
+03:36
+which is used to write GPU kernels.
+
+03:41
+But it's not just that.
+
+03:43
+You can write native GPU programs in other languages
+
+03:45
+as well, in Fortran, or OpenCL, for example.
+
+03:50
+Now, as well as programming the GPU in native parallel enabled
+
+03:54
+languages, many of what we call the standard language,
+
+03:57
+things like standard C++, have parallel constructs.
+
+04:00
+And the CUDA ecosystem has compilers
+
+04:02
+which support those as well.
+
+04:03
+In the case of these blue boxes of the NVC,
+
+04:06
+the NVC ++ compiler supports them.
+
+04:07
+So you can write a parallel program using C++ 17 standard
+
+04:12
+parallel constructs, and it will compile down to a GPU code
+
+04:17
+without you ever being anything other than explicitly parallel
+
+04:20
+inside C++ language itself.
+
+04:25
+It's not only the languages which are
+
+04:27
+supported by NVIDIA directly.
+
+04:28
+There are literally dozens of other languages
+
+04:30
+which are created by other companies, other groups, which
+
+04:33
+also compile onto and run on the GPU.
+
+04:35
+Things like Python via number or Matlab
+
+04:38
+from MathWorks and so on.
+
+04:43
+This is made possible because the CUDA platform
+
+04:46
+isn't only about languages.
+
+04:48
+I mean, sure, it has an entire layer that compilers
+
+04:50
+can target, because it's there explicitly
+
+04:53
+so that you can create all sorts of languages
+
+04:56
+as part of the GPU.
+
+04:57
+We know that people want to use different languages
+
+05:00
+for different purposes.
+
+05:01
+So we intentionally enable that through these compiler layers
+
+05:04
+of LVM and the underlying assembly.
+
+05:09
+Really, the CUDA platform is a series of abstraction layers
+
+05:13
+which exist so that different applications can
+
+05:15
+target the GPU in whatever way suits them best.
+
+05:18
+Not everyone's writing a compiler.
+
+05:20
+And in general, as you go from the bottom to the top here,
+
+05:23
+you're writing less and less specialized code.
+
+05:26
+And so you're more efficient in the way
+
+05:28
+that you're writing your code.
+
+05:30
+Let me tell you about--
+
+05:31
+let me tell you why I'm telling you this.
+
+05:34
+A few years ago when I was interviewing people,
+
+05:37
+I used to ask them to bring some code
+
+05:39
+or write some code to put a button on the screen.
+
+05:42
+And you'd be amazed at how many different answers I got.
+
+05:45
+But I wasn't looking to see whether you
+
+05:47
+knew how to create a button.
+
+05:49
+I was looking at how you created the button.
+
+05:54
+There are 1,000 ways to put a button on the screen.
+
+05:56
+And this example here isn't entirely fair,
+
+05:59
+but the point is that I'd much prefer
+
+06:01
+to use the code on the right than the code on the left.
+
+06:04
+It's not being lazy.
+
+06:05
+It's obviously more productive, right?
+
+06:07
+It's worth noting that there are probably
+
+06:09
+a million lines of code underneath both
+
+06:11
+of these implementations, because they're
+
+06:12
+calling into libraries and SDKs and all
+
+06:15
+that to render the screen and get the job done in both cases.
+
+06:18
+But it's simply good software engineering
+
+06:20
+to write and maintain the most efficient code you can.
+
+06:23
+So I'd always try and go with the code on the right.
+
+06:29
+Really, my point about the CUDA platform, productivity is key.
+
+06:33
+Why write a million lines when one will do?
+
+06:35
+And that's what the spectrum is all about.
+
+06:37
+Whatever your application is, whatever language it's written
+
+06:41
+in, there's almost certainly something out there to help you
+
+06:43
+accelerate it .
+
+06:44
+And it almost certainly does not require writing anything
+
+06:48
+in CUDA C++.
+
+06:49
+CUDA C++ one tiny little bit on the green layer.
+
+06:52
+But I appreciate most of you probably showed up to learn
+
+06:56
+a bit about how to write a CUDA C++ program.
+
+06:58
+So I will show you some of that.
+
+06:59
+But mostly, in fact, this talk is going
+
+07:02
+to be about not writing code.
+
+07:08
+So back to my first program.
+
+07:11
+Here's how I would attack the problem now.
+
+07:13
+We're going to start by figuring out an algorithm for generating
+
+07:16
+a landscape.
+
+07:17
+And I'm going to use something really simple
+
+07:19
+called recursive subdivision.
+
+07:21
+It's not the best algorithm out there.
+
+07:22
+Something like Perl and Noise would be better.
+
+07:24
+But it's an easy one to think about, an easy one to explain.
+
+07:27
+It happens to be the algorithm I implemented in my first CUDA
+
+07:30
+program.
+
+07:31
+So that's what we're going with.
+
+07:35
+Cursive subdivision is very simple.
+
+07:37
+We start with two points at random height
+
+07:39
+here between plus and minus 1 separated by some distance.
+
+07:42
+We draw a line between them.
+
+07:45
+And next, I pick a point in the middle of the line
+
+07:48
+and I set that to a random height.
+
+07:49
+This is the subdivision part of recursive subdivision.
+
+07:55
+And then I bisect the line and draw two lines
+
+07:57
+through that point.
+
+08:00
+Then I bisect both of those lines with more random points.
+
+08:02
+This is the recursive part.
+
+08:07
+Do it again and again, and so on.
+
+08:10
+And you can see there's something not quite right.
+
+08:13
+It's very jagged and chaotic.
+
+08:15
+That's because we need to apply one more rule to the algorithm.
+
+08:22
+Normal land doesn't jump up and down in height.
+
+08:24
+There's a gradient.
+
+08:25
+So each time we subdivide, what we're going to do
+
+08:27
+is we're going to start from the midpoint of the line.
+
+08:30
+And since we're dividing the line in two,
+
+08:32
+we only allow the height to vary by half of the previous range
+
+08:35
+as well.
+
+08:35
+So the width gets halved and the displacement gets halved.
+
+08:42
+Now, my next shift will be by plus or minus a quarter.
+
+08:47
+An eighth.
+
+08:51
+And in the end, I get a smoother and much more
+
+08:53
+natural looking skyline, right?
+
+08:54
+So this is recursive subdivision.
+
+08:57
+Pretty easy.
+
+09:00
+Obviously, we need to do this in two dimensions
+
+09:02
+to create the landscape.
+
+09:03
+But it's exactly the same algorithm.
+
+09:04
+You just do it vertically as well as horizontally.
+
+09:09
+Now, I'm going to walk you through the two-dimensional
+
+09:11
+algorithm because that's the one we're actually
+
+09:13
+going to implement.
+
+09:13
+And on the right-hand side here, I'm
+
+09:16
+drawing sort of an isometric view,
+
+09:18
+so you can see the effect of doing it in 2D.
+
+09:20
+Notice I've included a diagonal line
+
+09:22
+to separate the square down the middle,
+
+09:24
+because the square has four non-planar points,
+
+09:26
+and I separated them into two planar triangles.
+
+09:28
+This is classic, basic computer graphics.
+
+09:31
+And we're going to be rendering all of our 3D views
+
+09:33
+with this kind of triangular mesh,
+
+09:35
+calculating our landscape actually on this quadrant form.
+
+09:41
+This time, I'm going to subdivide both x and y,
+
+09:44
+giving me four new points.
+
+09:45
+And then I'll compute a fifth new point in the middle
+
+09:48
+as a random offset from the four new ones.
+
+09:50
+So it's kind of like take the corners to make
+
+09:52
+the sides and then the sides to make the middle.
+
+09:57
+Now, the subdivision occurs recursively as well, right?
+
+10:01
+Notice how each of the four squares
+
+10:03
+can be treated almost independently as I
+
+10:05
+subdivide them into ever smaller squares.
+
+10:11
+I say almost because along a shared edge,
+
+10:15
+the midpoints still need to come out the same, right?
+
+10:18
+I'll get to that later and how we do that.
+
+10:20
+But anyway, this sequence is going
+
+10:22
+to be the basis of our parallel algorithm.
+
+10:24
+As we recurse into the subdivision,
+
+10:26
+we create more and more squares, and each of those squares
+
+10:29
+can be operated on independently.
+
+10:32
+And so, suddenly we have an explosively growing amount
+
+10:35
+of work, of independent work, and it's
+
+10:37
+a problem that might map really nicely onto the GPU.
+
+10:44
+Eventually, [COUGHS],, excuse me, eventually you'll
+
+10:46
+end up with something so finely divided
+
+10:48
+that we can shade it nicely and it looks like a landscape.
+
+10:51
+So this is it.
+
+10:52
+This is the algorithm we're going to write in CUDA today.
+
+10:58
+Now, I'm going to start at the very beginning.
+
+11:01
+Not to be facetious, but go and download CUDA.
+
+11:04
+The reason I'm saying this, even if you have an old copy,
+
+11:06
+get a new one.
+
+11:08
+In particular, CUDA constantly update things
+
+11:10
+like the tools, the debugger, the profiler.
+
+11:14
+And the latest version of those will
+
+11:15
+have the most helpful stuff.
+
+11:17
+And the tools are invaluable.
+
+11:19
+I'll be talking about those later.
+
+11:20
+So go and get the latest CUDA.
+
+11:22
+I got CUD 12.0 because that was what was current
+
+11:24
+when I was writing this talk.
+
+11:26
+But whatever the latest version is for you.
+
+11:29
+CUDA is perpetually compatible, so whatever you write
+
+11:32
+will work on future CUDA as well.
+
+11:37
+Now, like any programmer, I don't start with documentation.
+
+11:40
+I go and find some code to read instead.
+
+11:42
+And I assume you do too.
+
+11:44
+CUDA has a whole bunch of samples.
+
+11:45
+And so I'm going to go and grab them from GitHub.
+
+11:48
+I think they're also available for download as a zip archive
+
+11:50
+as well if you like.
+
+11:52
+But I just went to GitHub here, found the samples, cloned them.
+
+11:55
+And there's also NVIDIA's documentation about them
+
+11:58
+on the CUDA Developer Zone.
+
+11:59
+There's a bunch of information in GitHub.
+
+12:01
+It's a great information resource, so go and grab those.
+
+12:07
+I'm not going to go through all the samples,
+
+12:09
+because we don't have time.
+
+12:11
+But that's actually what I did.
+
+12:13
+And I found one that looks kind of like what I want.
+
+12:15
+So we're going to steal whatever we can from it.
+
+12:18
+It's called OceanFFT.
+
+12:20
+And this sample both algorithmically creates
+
+12:23
+a surface and then renders it in OpenGL,
+
+12:26
+which is just what we want.
+
+12:27
+We want to create a landscape and we want to draw it.
+
+12:29
+So perfect.
+
+12:34
+An interesting thing to point out about the OceanFFT sample,
+
+12:38
+it doesn't actually contain any FFT code at all.
+
+12:44
+Instead, it contains a single line call
+
+12:47
+to CUDA's Fast Fourier Transform library, cuFFT.
+
+12:50
+So just like I wanted to use a single line of code
+
+12:53
+to put a button on the screen, I love
+
+12:54
+that it's using a single line of code
+
+12:56
+to do something as complicated as a Fourier transform.
+
+12:59
+There are actually two pieces to this whole sample.
+
+13:01
+Generating the spectrum kernel, which
+
+13:04
+they do with a real kernel.
+
+13:05
+And using an FFT to turn it into a height map, which
+
+13:09
+they call into a library form.
+
+13:10
+This whole sample comes down to these two lines of code.
+
+13:13
+And that's great news for us.
+
+13:15
+The less code we have to write, the better.
+
+13:18
+So we're going to use this OceanFFT example to create
+
+13:20
+most of our landscape program.
+
+13:22
+But we will write some of the CUDA
+
+13:24
+ourselves as well to turn it into an endless landscape
+
+13:27
+generator.
+
+13:28
+All right.
+
+13:28
+So first, let's take a look at CUDA C++ itself.
+
+13:33
+So a CUDA program is what we call heterogeneous.
+
+13:36
+That is to say it's a single program comprising both CPU
+
+13:40
+and GPU components.
+
+13:42
+The idea of a heterogeneous program
+
+13:44
+is to run the parallel parts on a parallel machine, the GPU
+
+13:47
+and the serial part on a serial machine, the CPU.
+
+13:50
+So you steer your execution towards the processor that
+
+13:54
+is best suited for its type.
+
+13:57
+This is a simple Hello, World example.
+
+13:59
+You can see on the left, there's a single source file.
+
+14:02
+But it comprises both GPU and CPU functions.
+
+14:05
+It's what we'd call a heterogeneous program.
+
+14:07
+One source code with two different types of program
+
+14:12
+embedded within it.
+
+14:13
+And which one runs where is managed by the CUDA runtime.
+
+14:20
+Make a CUDA function call.
+
+14:22
+And the main is calling into Hello.
+
+14:24
+To make a CUDA function call, there
+
+14:25
+are two pieces, the function and the call.
+
+14:28
+A CUDA function is called a kernel, for historic reasons.
+
+14:31
+It's not an operating system kernel.
+
+14:33
+It's really just a small program that runs on another device.
+
+14:36
+It's just what we call it.
+
+14:38
+The compiler knows that a given function
+
+14:39
+should be run on the GPU, because it's
+
+14:42
+annotated by this global keyword that I've
+
+14:44
+highlighted in the middle here.
+
+14:48
+That's the function.
+
+14:50
+The second part is the call.
+
+14:51
+And it sort of looks like a normal C language
+
+14:54
+function called a Hello.
+
+14:55
+But it needed a little extra information,
+
+14:57
+because a normal C function call runs
+
+14:58
+in the thread which calls it.
+
+15:00
+That is to say, the thread of execution reaches the function,
+
+15:04
+moves into executing the function, and then returns.
+
+15:06
+But you're not running the CUDA function on the CPU, right?
+
+15:09
+We're going from one thread to many threads on the GPU.
+
+15:12
+So you need a bit of extra information
+
+15:14
+of how to make the call.
+
+15:15
+This is this triple chevron annotation
+
+15:17
+you see on the bottom to tell the system how
+
+15:20
+many threads to use on the GPU.
+
+15:22
+Now, this is Hello, World.
+
+15:23
+We're only using one thread.
+
+15:24
+But we're going to get into this a lot more depth in a moment.
+
+15:31
+Varying the hardware of CPU and GPU,
+
+15:33
+there are some fundamental differences
+
+15:35
+which affect the way we design and run a program.
+
+15:37
+I'm just going to give you a quick cursory overview,
+
+15:40
+but I've gone into depth about how things are run on the GPU
+
+15:42
+in the talks I gave, particularly a couple of years
+
+15:45
+ago, called How GPU programming Works.
+
+15:49
+On a CPU, on the left hand side, I have several calls.
+
+15:53
+And I typically run one thread per call.
+
+15:55
+And when you start a new thread, it
+
+15:57
+is usually will run on different call
+
+15:59
+until you run out of calls.
+
+16:00
+And when you run out of calls, the operating system
+
+16:02
+starts preempting them to achieve multitasking.
+
+16:04
+And that's how I can run more threads than I have calls.
+
+16:07
+Now, the GPU has many more calls.
+
+16:10
+My laptop GPU, my little tiny laptop, has 20,
+
+16:13
+and we call them SMs, streaming multi-processors.
+
+16:16
+And each SM runs internally up to 2,048 threads.
+
+16:21
+That's way more than a CPU call that's typically running one,
+
+16:24
+with maybe a hyper thread, right?
+
+16:25
+This makes execution on a GPU parallel within a call.
+
+16:31
+So the threads in a single call cooperate on processing data.
+
+16:36
+There is no preemption, which means
+
+16:38
+that once work fills the machine,
+
+16:40
+you have to wait for existing work
+
+16:41
+to exit before you can run more.
+
+16:44
+This is called a throughput architecture,
+
+16:46
+because the goal is to stream through work as fast
+
+16:48
+as possible, instead of doing lots of things
+
+16:52
+as fast as you can do each one at once.
+
+16:54
+Let's say I went into a lot more detail about what a throughput
+
+16:56
+architecture is about a couple of years ago.
+
+16:58
+So plugging my own talk.
+
+17:00
+By all means, do go and have a look at that.
+
+17:02
+And I go into much more detail about the GPU architecture.
+
+17:07
+What we call the CUDA programming model is the way
+
+17:10
+CUDA maps work to the GPU in a hierarchy
+
+17:14
+that matches the hardware.
+
+17:15
+It really matches those multi-processors with threads
+
+17:19
+inside of them.
+
+17:19
+So at the topmost level, we have the program we want to run.
+
+17:23
+Let's say I want to do some image processing
+
+17:25
+on this picture of a flower.
+
+17:26
+We call this overall program a grid.
+
+17:32
+It is made up of what we call thread blocks.
+
+17:34
+Thread blocks are independent chunks of work
+
+17:36
+and we literally explode the whole grid of work
+
+17:39
+into these individual blocks for parallel processing.
+
+17:41
+Many blocks can run at once.
+
+17:44
+Like threads on your CPU, they'll span lots of SMs,
+
+17:47
+but I can actually run up to 16 blocks on an individual SM
+
+17:51
+as well.
+
+17:51
+So I can run a lot of blocks on my machine.
+
+17:53
+And this is my first level of parallelism.
+
+17:58
+Then we have the block itself, which
+
+18:00
+is made up of many threads, up to 1,024 threads,
+
+18:04
+can be in a block.
+
+18:05
+And these threads work together to crunch the data
+
+18:08
+that their block is working on.
+
+18:10
+Remember, the blocks are running or working
+
+18:12
+on independent chunks of data running on different SMs.
+
+18:16
+That's very different from a CPU, where a single thread
+
+18:19
+typically occupies an entire core
+
+18:21
+and just iterates across the chunk of data all by itself.
+
+18:24
+The block is intrinsically parallel.
+
+18:27
+And this extra layer of hierarchy in a CUDA program
+
+18:30
+enables what we call data parallelism, where
+
+18:33
+we use the brute force of as many as 1,000 threads in one
+
+18:36
+block to process its part of a single logic problem.
+
+18:40
+It's parallelism within parallelism.
+
+18:44
+So let's apply this to our terrain generation problem.
+
+18:47
+On the first step of my recursive algorithm,
+
+18:50
+my problem is initially just a single chunk of work,
+
+18:52
+computing the four corners, and their midpoints.
+
+18:55
+But as I recurse into the height map,
+
+18:57
+I split that into four chunks, then 16, then 64, and so on,
+
+19:01
+right?
+
+19:02
+This natural chunking suggests an obvious mapping
+
+19:05
+to the GPU's grid to block execution model.
+
+19:09
+It looks a lot like my flower example just now.
+
+19:12
+Each chunk of this will map to an independent block of work
+
+19:15
+in my grid.
+
+19:19
+So if we decide we like a terrain map that's
+
+19:22
+1,024 square, because it's a nice power of 2,
+
+19:25
+we can break this down into a number of blocks
+
+19:28
+and have each block process some number of pixels.
+
+19:32
+But how do we decide how many blocks?
+
+19:35
+I could have a million blocks, at one point per block.
+
+19:39
+But since any one block can contain 1,000 threads,
+
+19:43
+it seems pretty inefficient to have just one thread per block.
+
+19:47
+So how do I strike this balance?
+
+19:52
+You mean that I'm going to assign
+
+19:53
+one pixel to each thread.
+
+19:55
+And remember, I'm on a data parallel machine, right?
+
+19:57
+Which means all those threads just divide up the work,
+
+19:59
+so that makes sense.
+
+20:00
+If I have a million pixels, I would need a million threads.
+
+20:03
+OK, good.
+
+20:04
+So I can now look at how I chunk up my work
+
+20:07
+and create a little table of x blocks by y blocks,
+
+20:11
+versus the number of threads I can include in each block.
+
+20:13
+Remember, each block can include up to 1,024 threads.
+
+20:16
+And I can make this a little table.
+
+20:18
+And if you look at the right hand column,
+
+20:19
+it'll tell us that given a certain number of blocks
+
+20:22
+in my entire grid, how many threads per block
+
+20:24
+I would need to total a million pixels.
+
+20:27
+And so this tells us how many pixels
+
+20:29
+we're going to be computing.
+
+20:33
+As I was saying earlier, the GPU hardware
+
+20:35
+can only run 1,024 threads per block.
+
+20:38
+So the top row is simply illegal.
+
+20:41
+And for a variety of reasons that I covered in a talk
+
+20:44
+last year, plugging my own talk again,
+
+20:46
+the How CUDA Programming Works talk,
+
+20:49
+you really want a minimum of 128 threads per block, which will
+
+20:54
+just rule out the bottom row.
+
+20:55
+So we're left with 1,024 or 256, which are both good numbers.
+
+20:59
+And it's really a matter of choice which to use.
+
+21:02
+So let's talk about that choice.
+
+21:05
+How do I choose?
+
+21:06
+Well, in the same way that you don't drive your car around
+
+21:09
+at the maximum revs its engine can handle,
+
+21:11
+I prefer not to pack the maximum number of threads into a block.
+
+21:15
+So I'm going to choose the third row, with 64
+
+21:19
+by 64 blocks and 256 threads per block.
+
+21:22
+As a general rule of thumb, if you
+
+21:24
+have a problem that doesn't break down
+
+21:26
+in an obvious hierarchical way like this,
+
+21:27
+or you just can't figure it out, 256 is a great first number.
+
+21:31
+And that's a great starting point.
+
+21:33
+And that's what we're going to be using today.
+
+21:39
+My workload now looks like this.
+
+21:40
+I have a 64 by 64 grid which is 4,096 blocks in total.
+
+21:46
+And each of those blocks are going
+
+21:48
+to be responsible for a 16 by 16 chunk of the terrain, which
+
+21:51
+is 256 pixels per block.
+
+21:53
+And that multiplies together to give me the million
+
+21:56
+points that I'm looking for.
+
+22:00
+So great.
+
+22:01
+We've worked out how much work to throw at the GPU.
+
+22:04
+And now let's look a little bit more
+
+22:06
+closely at the OceanFFT sample to see what we can steal.
+
+22:10
+I've drawn up a little flow chart.
+
+22:12
+I went and read through the code and a little flow
+
+22:14
+chart of the sequence of operations it goes through
+
+22:16
+to generate the ocean, and I've drawn
+
+22:18
+GPU operations in green and CPU operations in blue.
+
+22:21
+So it generates a surface.
+
+22:23
+It maps it to a height map.
+
+22:24
+It calls into OpenGL to do the rendering of the mesh.
+
+22:28
+And then it checks to see if the viewpoint has changed
+
+22:30
+before doing it all over again.
+
+22:35
+Now, the piece I'm most interested in
+
+22:37
+is the generating of the height map.
+
+22:39
+If we can hijack that and generate our own landscape
+
+22:42
+height map instead of an ocean, we
+
+22:44
+can pretty much reuse the entire of the rest of the sample code.
+
+22:50
+And in fact, we don't need to bother with the ocean
+
+22:52
+generation part at all.
+
+22:53
+So I figure we'll just compute the terrain directly
+
+22:57
+in the height map function call and call it good.
+
+22:59
+That's fewer things to do.
+
+23:01
+So I'm going to combine those two first computational
+
+23:04
+steps into one.
+
+23:08
+First thing I'm going to do is I'm
+
+23:10
+going to write a quick little test
+
+23:11
+to prove to myself that I have hijacked
+
+23:12
+the right piece of code.
+
+23:14
+This is I'm literally taking you through the steps
+
+23:16
+that I spend recreating this example.
+
+23:18
+And I just hacked it a bit, wrote these four lines of code
+
+23:21
+here, just setting the height according
+
+23:23
+to the pixel location on the mesh,
+
+23:24
+and because it's based on pixel location, what we should see
+
+23:28
+when OpenGL draws it is a sawtooth pattern, just
+
+23:30
+enough to prove to ourselves that we are generating
+
+23:33
+some height, and therefore, we can do something more
+
+23:37
+interesting with it next time.
+
+23:41
+Notice how, here, I've used a key piece of CUDA, the fact
+
+23:45
+that CUDA tells every worker thread what block and thread
+
+23:49
+index it has in the grid.
+
+23:51
+And so now I can do some simple arithmetic
+
+23:53
+to convert that into an x and y location in my mesh.
+
+23:56
+So my pixel can find out exactly--
+
+23:59
+sorry, my thread can find out exactly
+
+24:01
+which pixel it's looking at.
+
+24:02
+And if you look closely, you'll notice
+
+24:04
+that the block and thread indices
+
+24:05
+have both x and y dimension.
+
+24:07
+CUDA actually lets me launch a two or even a three dimensional
+
+24:10
+block, which can greatly simplify my index arithmetic.
+
+24:13
+So in general, if I'm doing a 2D problem,
+
+24:15
+I'll launch a 2D block.
+
+24:16
+Or if I'm doing a 3D problem, I'll launch a 3D block.
+
+24:18
+You can also launch 2 and 3D grids.
+
+24:24
+Here we are.
+
+24:24
+My basic test, literally those four lines
+
+24:26
+of code producing a sawtooth pattern.
+
+24:28
+Looks like it's doing the trick, right?
+
+24:30
+So we have successfully hooked into OceanFFT.
+
+24:33
+And now I can focus on the actual landscape
+
+24:36
+algorithm from here on.
+
+24:41
+So back to our recursive subdivision algorithm, right?
+
+24:43
+If you remember, we're breaking it down into these steps
+
+24:46
+of increasing grid size, which means an increasing
+
+24:49
+number of blocks as we get to higher and higher resolution.
+
+24:54
+Now, here's a quick but important sidetrack.
+
+24:57
+A key part of my algorithm is that I
+
+24:59
+have a random shift at every pixel,
+
+25:00
+like I'm showing on the left.
+
+25:02
+So I use something called pseudo random numbers, which
+
+25:05
+is a random number sequence which is predictable,
+
+25:08
+so that all of my threads agree on every pixel's height.
+
+25:10
+Because if you remember on the boundaries between chunks,
+
+25:14
+there are pixels that get recalculated.
+
+25:17
+So the different chunks, which are different blocks of code,
+
+25:19
+need to all agree on what the same numbers would
+
+25:21
+be at that particular x and y location.
+
+25:27
+What I'm going to do is I'm going
+
+25:29
+to create a map of random numbers
+
+25:31
+the same size as my mesh.
+
+25:34
+So when my worker threads need a random number
+
+25:37
+for a particular location on the mesh,
+
+25:39
+they just look it up to generate their offsets.
+
+25:42
+The problem is that creating millions
+
+25:45
+of pseudo random numbers in parallel is a pain.
+
+25:47
+And I'd rather not deal with it.
+
+25:51
+Thinking back to my one line button on the screen,
+
+25:53
+if you remember our abstraction stack, the higher up the stack
+
+25:56
+we are, the less work we have to do.
+
+25:59
+And CUDA kindly give us a library called cuRAND,
+
+26:02
+which is a random number generating library which
+
+26:04
+does exactly what we want.
+
+26:06
+And there's a sample that I can steal.
+
+26:08
+Super handy, right?
+
+26:09
+So I'll steal the cuRAND sample.
+
+26:12
+It's in something called random fog.
+
+26:14
+And take that code and we can get back to our algorithm.
+
+26:20
+Getting a few corners, working out a few bugs later.
+
+26:22
+And I'll get to dealing with the bugs in a moment.
+
+26:25
+I'm now generating a random recursive subdivision
+
+26:28
+patch of terrain.
+
+26:29
+Nice, huh?
+
+26:30
+This rendering all comes from OceanFFT.
+
+26:33
+And for reference, the entire code
+
+26:35
+that I wrote for this thing that you're seeing here
+
+26:37
+is 96 lines of CUDA.
+
+26:39
+That is literally all I wrote to make this.
+
+26:47
+So great.
+
+26:47
+So far so good.
+
+26:49
+But I don't just want a static landscape, though.
+
+26:51
+I want to animate an endless landscape.
+
+26:54
+So I need to be sure I can create the landscape patches
+
+26:57
+and fade between them and so on.
+
+26:58
+And so I need to be sure I can do animation in our OceanFFT
+
+27:01
+sample as well.
+
+27:02
+So let's tweak the program quickly
+
+27:04
+to prove that we can also animate our terrain
+
+27:06
+generation inside OceanFFT.
+
+27:09
+What I'm going to do is I'm going to create two maps, just
+
+27:12
+basic double buffering.
+
+27:12
+And I'm going to morph from one to the next on every time step
+
+27:15
+that we draw it.
+
+27:16
+Let me show you how that works.
+
+27:19
+Morphing is pretty simple.
+
+27:20
+It just involves progressively taking
+
+27:22
+every point in the first map and moving it
+
+27:24
+towards the corresponding point in the second map.
+
+27:26
+It's pretty simple, as you can see.
+
+27:30
+The idea is simple, but as for everything, there
+
+27:33
+are good ways and bad ways to go about it.
+
+27:35
+So let's look back at our workflow
+
+27:37
+and think about how the workflow is mapping to the GPU.
+
+27:43
+So here's the secret to doing this efficiently.
+
+27:46
+I'm going to keep all my data on the GPU.
+
+27:49
+And that means my morphing operation stays on the GPU
+
+27:53
+with the data as well.
+
+27:54
+So not only the data for the terrain
+
+27:56
+map, but all the mesh and triangle
+
+27:57
+data for display, and the execution computation that
+
+28:00
+moves between the two.
+
+28:02
+The GPU can access CPU memory directly.
+
+28:05
+But notice the difference.
+
+28:06
+It's 100 times faster to access its own memory
+
+28:09
+at 1,555 gigabytes per second, because the CPU
+
+28:13
+is on the other side of the PCI bus, which only moves about 16.
+
+28:17
+This is the biggest secret of GPU programming,
+
+28:19
+to keep your data in one place as much as possible,
+
+28:22
+because you don't want to pay that PCIE transfer price.
+
+28:30
+So now, the GPU is basically doing all the work,
+
+28:32
+with the CPU just controlling the show.
+
+28:34
+And we can keep on flipping between pairs of maps,
+
+28:36
+morphing them into one another.
+
+28:38
+We have animated terrain.
+
+28:40
+We're not quite there, but it's definitely getting there.
+
+28:47
+So now, I'm convinced we can hijack OceanFFT's renderer,
+
+28:50
+insert our own terrain generator, and animate it.
+
+28:53
+We're nearly there, right?
+
+28:56
+So what we're going to do is make it look a bit prettier.
+
+28:58
+We're going to adjust something called the fragment shader
+
+29:00
+in OpenGL to color it.
+
+29:02
+Now, I know nothing about OpenGL.
+
+29:04
+But once I found the fragment shader,
+
+29:06
+it was obvious how to tweak it.
+
+29:08
+So I'm not going to walk you through all of that.
+
+29:10
+But this whole thing literally took me a couple of minutes.
+
+29:12
+[COUGHS] Excuse me.
+
+29:15
+On the right hand side, I've also
+
+29:17
+applied a depth cut off at 30%.
+
+29:19
+So we get what looks like the sea, right?
+
+29:21
+It's literally a simple less than operation,
+
+29:23
+but it makes the whole thing look nicer.
+
+29:25
+And finally, I don't want to just morph maps into each other
+
+29:29
+like I was in the previous example.
+
+29:31
+I want to actually fly over my landscape.
+
+29:33
+So I need a long continuous strip of terrain patches.
+
+29:39
+Now, to make the generated maps appear continuous,
+
+29:42
+I need to adjust the algorithm slightly so
+
+29:44
+that the top row of one map matches
+
+29:47
+the bottom row of the next, so that they stitch together
+
+29:49
+along a theme.
+
+29:51
+My recursive subdivision algorithm makes this easy.
+
+29:54
+Instead of starting with random numbers along the bottom edge,
+
+29:56
+I simply copy the values from the previous map's top edge,
+
+30:00
+and I use those.
+
+30:01
+Everything else in between will be
+
+30:02
+anchored by that predetermined bottom row,
+
+30:04
+and so it looks like a single continuous piece of landscape.
+
+30:10
+And it's just a matter of combining two maps together
+
+30:13
+to decide which segment of the continuous terrain
+
+30:16
+is displayed.
+
+30:17
+In this case, I start with a current map
+
+30:19
+and move progressively towards the next map.
+
+30:21
+Just like this.
+
+30:29
+At this point, my next map becomes my current map.
+
+30:32
+The newly generated one becomes the next map.
+
+30:34
+And the cycle continues, right?
+
+30:35
+I can simply overwrite the old map with the new next map,
+
+30:38
+and loop forever, generating endless terrain.
+
+30:41
+And we're basically done.
+
+30:48
+So we're nearly there.
+
+30:49
+We can generate an endless landscape.
+
+30:52
+All I need now is to fly over it and I've completed
+
+30:55
+my first CUDA program.
+
+30:56
+The flying part is what makes it look cool,
+
+30:58
+and we had to make it look cool by Friday.
+
+31:00
+So let's have a look at the flying part.
+
+31:06
+Here's what we're aiming for.
+
+31:07
+A scrolling landscape that we can dip down and fly over
+
+31:12
+at low altitude.
+
+31:14
+One thing I really wanted here, and it was the thing
+
+31:17
+that I did for my first ever CUDA program,
+
+31:19
+was to adjust the altitude with the terrain
+
+31:20
+so it really kind of looks interactive, right?
+
+31:23
+So what we need is to know what the altitude is
+
+31:27
+at the point where our camera is flying.
+
+31:30
+So I'll zoom back out.
+
+31:34
+If you remember, we're keeping all our data on the GPU
+
+31:37
+as much as possible.
+
+31:37
+So we're going to sample the terrain just
+
+31:40
+along a single line where our viewpoint is, and we're
+
+31:42
+going to use that.
+
+31:47
+Now, all our map data is on the GPU,
+
+31:49
+of course, because we carefully made sure that all of our data
+
+31:51
+processing is on the GPU.
+
+31:53
+That includes the high profile data
+
+31:55
+that we need to set our altitude.
+
+31:59
+But unfortunately, if we look back at the workflow,
+
+32:02
+we see that all the control and viewpoint logic is on the CPU.
+
+32:06
+So the CPU needs access to the data
+
+32:09
+that's on the GPU, the high profile,
+
+32:10
+so it can adjust the viewpoint.
+
+32:15
+CPU unfortunately can't read directly from GPU memory,
+
+32:19
+even though, conversely, the GPU actually can
+
+32:22
+read from the CPU's memory under certain circumstances.
+
+32:25
+More on that in a moment.
+
+32:30
+Now, we need to explicitly copy the data back from the GPU
+
+32:34
+to the CPU, because the CPU needed access to that memory
+
+32:37
+and can't read it directly, in order to adjust our view point.
+
+32:41
+And as in many things, there's a good way
+
+32:43
+in a bad way to do that.
+
+32:44
+So let me tell you about the good way.
+
+32:50
+And the good way comes down to how memory is created
+
+32:54
+and referenced by the program.
+
+32:56
+CUDA provides a function, cudaMalloc, to allocate data
+
+32:59
+on the GPU, which works similar to malloc on a normal C
+
+33:02
+program.
+
+33:03
+It carves out a certain size of memory and returns a pointer.
+
+33:08
+CUDA also gives you a way to allocate data on the CPU.
+
+33:12
+And this allocation is special, right?
+
+33:14
+It's this cudaMalloc host call that I've written down here.
+
+33:18
+And it creates what's called pinned system memory.
+
+33:20
+This is memory that's marked in the system kernel for fast DMA
+
+33:25
+data transfer, and fast transfer is exactly what we want.
+
+33:28
+Now, you absolutely can copy data from the GPU
+
+33:31
+into normal memory on the CPU that was not allocated by CUDA.
+
+33:35
+But it is five or six times faster
+
+33:37
+to do it into memory that's allocated
+
+33:40
+using this cudaMalloc host.
+
+33:41
+Because system memory is so much more efficient.
+
+33:46
+CudaMalloc host basically allocates
+
+33:47
+GPU accessible memory, memory that's
+
+33:49
+directly accessible by the GPU.
+
+33:51
+If you remember, I mentioned that the GPU
+
+33:53
+can touch CPU memory.
+
+33:54
+It can't touch any CPU memory.
+
+33:56
+It can touch the stuff that was allocated this way.
+
+33:59
+And that can be very helpful in a more sophisticated algorithm.
+
+34:03
+So this is the core of our flying over our terrain.
+
+34:07
+But I want to take a quick diversion
+
+34:09
+into working with developing and debugging code,
+
+34:13
+while we're doing all of these things.
+
+34:22
+I really want to talk about developer tools for a moment,
+
+34:25
+because when you're explaining how to write a CUDA program,
+
+34:29
+I cannot imagine doing it without the aid of developer
+
+34:33
+tools.
+
+34:33
+The developer tool suite for CUDA is called Nsight,
+
+34:37
+and it is invaluable.
+
+34:39
+If you take only one thing away from this talk,
+
+34:42
+please let it be that it is worth spending a day
+
+34:45
+learning how to access and use the tools.
+
+34:47
+You will save yourself months of hassle.
+
+34:50
+Now, I use Visual Studio.
+
+34:53
+It's my preferred IDE.
+
+34:55
+But the tools integrate into more or less any IDE
+
+34:58
+and have command line options.
+
+35:00
+For me, as I'm showing here, I can just
+
+35:02
+start the Nsight debugger directly
+
+35:04
+from the Extension's menu.
+
+35:07
+Then the debugger lets me add breakpoints
+
+35:10
+in either CPU or GPU code.
+
+35:12
+And it does all the things I expect
+
+35:14
+a debugger to do, single stepping, watch variables, all
+
+35:17
+that sort of thing.
+
+35:18
+It's literally no different from the debug experience
+
+35:21
+you're used to, except it can debug
+
+35:24
+an entire heterogeneous program with CPU functions and GPU
+
+35:26
+functions, running thousands of threads at once.
+
+35:32
+Profiler is slightly more complex.
+
+35:35
+But I'm serious, spend a day learning how to use it.
+
+35:38
+It will transform your results.
+
+35:42
+Those user like my laptop has Windows,
+
+35:44
+you need to enable the GPU performance
+
+35:45
+counters from the NVIDIA Control Panel first.
+
+35:50
+But there are two forms of Profiler.
+
+35:52
+Profiling, sorry.
+
+35:53
+And I'll start with the GPU specific profiler
+
+35:55
+called Nsight Compute, which is this thing on the right.
+
+35:57
+You can launch it directly, or from within your IDE.
+
+36:04
+One of the things I love about Nsight Compute
+
+36:06
+is that it gives you human readable analysis
+
+36:09
+of what your program is doing.
+
+36:10
+It'll give you all these counters and numbers,
+
+36:12
+but it will then sit down and analyze them all
+
+36:13
+and tell you how you're doing, and where your weak points are.
+
+36:17
+Breaks down where the kernel is spending time
+
+36:19
+and gives me a summary of how well it thinks it's doing.
+
+36:23
+This one here that you're seeing is actually a good report,
+
+36:25
+right?
+
+36:26
+80% utilization is actually really good,
+
+36:27
+because obviously this is not the first CUDA
+
+36:29
+kernel I've ever written.
+
+36:30
+But I honestly run every single kernel
+
+36:33
+I write through this tool, and it tells me
+
+36:35
+exactly where the weak points are,
+
+36:37
+where I have to focus my optimization effort,
+
+36:39
+and whether it's, in this case, optimized well enough,
+
+36:42
+or time to move on to another kernel
+
+36:43
+and spend time there instead.
+
+36:46
+Very, very helpful.
+
+36:51
+The other profiler view, which is probably
+
+36:54
+the one I use the most, is the whole system view
+
+36:57
+from Nsight Systems.
+
+36:59
+Nsight Compute, specifically, is profiling the GPU with all
+
+37:02
+the fine detail that it can.
+
+37:03
+This gives you an amazing timeline
+
+37:07
+where I can look at when and for how long
+
+37:09
+my kernels are running, what the gaps are,
+
+37:11
+and the important part is that it lines up the GPU
+
+37:15
+work with the CPU work, so I can see whether the GPU is waiting
+
+37:18
+on the CPU, or vice versa.
+
+37:20
+I can see how efficiently everything is streamlined.
+
+37:23
+I can see my throughput working.
+
+37:25
+This is probably the profiling tool I use the most.
+
+37:28
+I'm not going to walk you through it, because there's not
+
+37:30
+time, and there are a ton of talks, demos,
+
+37:33
+walkthroughs available online.
+
+37:34
+You can find them all over the place.
+
+37:36
+Spend your day learning this, please.
+
+37:38
+You don't have to remember anything else from this talk,
+
+37:41
+but go and learn the tools.
+
+37:45
+OK, so we're done.
+
+37:47
+We've got a cool CUDA program.
+
+37:49
+But since we're talking about profiling,
+
+37:51
+I want to actually walk you through a cycle of optimizing
+
+37:54
+as well, because that's usually the next thing that you do.
+
+37:56
+Once you've got it working, you say, why isn't it going faster?
+
+38:00
+So it's going to get a bit more advanced, but bear with me.
+
+38:04
+If you remember, basic recursive algorithm repeatedly
+
+38:07
+launches more and more grids to successively subdivide the map,
+
+38:11
+until we end up with a 1,024 square mesh.
+
+38:17
+So let's look a little bit more closely
+
+38:19
+at what's happening here.
+
+38:20
+First, we launch a single block grid, which sets up
+
+38:23
+the initial four corners.
+
+38:27
+And we launched a new grid.
+
+38:29
+We've only got one chunk.
+
+38:30
+So this is a 1 by 1 single block grid.
+
+38:32
+It reads in those corners that we just set up, and calculates
+
+38:39
+the midpoints and the center point,
+
+38:40
+and writes them back out to GPU memory.
+
+38:42
+So I start up, read some data, do a small calculation,
+
+38:45
+write it back out.
+
+38:49
+Then we repeat the process.
+
+38:51
+This is our recursive subdivision algorithm.
+
+38:53
+We keep launching double the number of threads each time.
+
+38:55
+So the next time is 2 by 2.
+
+39:00
+It reads in the data, writes out the midpoint.
+
+39:04
+Then we have a 4 by 4 grid.
+
+39:08
+It too reads data, calculates, writes data.
+
+39:13
+And so on, until we've got a 64 by 64 grid
+
+39:20
+with 256 threads per block, if you remember the numbers
+
+39:22
+that we came up with before.
+
+39:23
+And overall, this is our original algorithm.
+
+39:27
+For our 1,024 by 1,024 mesh, this
+
+39:30
+comes out as 10 grid launches.
+
+39:32
+And each one of those, I read in the data
+
+39:34
+that I wrote out with the previous launch,
+
+39:36
+calculate something else, and write it back out.
+
+39:38
+And the profiler will tell me that this
+
+39:40
+is taking, on my particular laptop, about 0.8 milliseconds
+
+39:45
+to compute.
+
+39:46
+And that's a lot of launches, right?
+
+39:48
+And I think we can do much better.
+
+39:55
+So first, here's a key observation
+
+39:57
+about how a GPU is very different from a CPU.
+
+40:01
+CPUs have very fast caches, but the GPU
+
+40:04
+handles memory differently.
+
+40:05
+And again, I'm going to reference
+
+40:07
+that my GTC talk from a couple of years
+
+40:10
+ago, How GPU Programming Works.
+
+40:11
+I go into some detail here.
+
+40:13
+But in general, on a GPU it's much faster
+
+40:16
+to read computer value than it is to save it to memory
+
+40:19
+and read it back.
+
+40:19
+It's about actually 100 times faster.
+
+40:22
+It's about five cycles to do an arithmetic operation and 500
+
+40:25
+to touch the memory.
+
+40:26
+So that means the way I tune a GPU
+
+40:28
+program can be very different from how I tune a CPU program.
+
+40:31
+I'm going to change our algorithm
+
+40:33
+to replace this launch, then read, then write pattern
+
+40:36
+that I was just talking about, into much faster
+
+40:38
+computation-centric kernel.
+
+40:41
+Here goes.
+
+40:44
+What I'm going to do is I'm going
+
+40:46
+to go straight to our final launch,
+
+40:48
+and launch a million threads in one go.
+
+40:50
+That's our 64 by 64 grid launch, with 256 threads per block.
+
+40:54
+So a million total threads.
+
+40:55
+And I'm going to treat each thread completely
+
+40:58
+independently.
+
+40:58
+So each thread on its own is going
+
+41:01
+to calculate the value of a pixel,
+
+41:03
+including all of the hierarchy that precedes it.
+
+41:10
+Start by generating my corner points, right?
+
+41:12
+Remember, each and every thread is doing this.
+
+41:14
+So every thread generates it and keeps it local,
+
+41:17
+in that threads own local register and data.
+
+41:19
+I'm generating them a million times.
+
+41:21
+But I'm not saving them to memory.
+
+41:23
+They're just kept as local data within a thread.
+
+41:25
+So I pay the calculation cost but not
+
+41:27
+the memory cost, which is, if you remember calculations,
+
+41:29
+much cheaper.
+
+41:33
+And using these points, I generate my five midpoints.
+
+41:37
+Again, this is completely within the thread's local registers.
+
+41:40
+This thread we're following is aiming
+
+41:41
+at that yellow circle in the middle there,
+
+41:43
+but every thread on the mesh is going
+
+41:44
+to be doing exactly the same computations.
+
+41:46
+And everyone is going to generate
+
+41:48
+the same set of points, because they're all
+
+41:50
+using the same pseudo random number generator.
+
+41:58
+Now, for this thread, some of my midpoints
+
+42:00
+become my new corner points as I zoom in on my target.
+
+42:03
+I'm going to throw the rest away.
+
+42:04
+So I'm just going to keep that bottom right
+
+42:06
+quadrant, because that's where my circle is.
+
+42:11
+I repeat the process for my smaller square.
+
+42:13
+I'm generating five new midpoints, so on and so on.
+
+42:17
+I get new corner points.
+
+42:21
+Generate midpoints from those.
+
+42:25
+And eventually, I have my target point.
+
+42:28
+And every thread generates the target point
+
+42:30
+at exactly the same time, with exactly the same number
+
+42:33
+of calculations.
+
+42:34
+This takes, for any given thread, log n steps.
+
+42:37
+So for a 1,024 wide mesh, that's 10 steps.
+
+42:40
+And each step is calculating five midpoints.
+
+42:42
+So in total, every thread has computed 50 points.
+
+42:46
+But remember, I can do 100 calculations for the cost
+
+42:49
+of a single memory load.
+
+42:50
+I've not had to read and write repeatedly from memory at all.
+
+42:53
+It is a single pass algorithm with a single kernel launch.
+
+42:57
+The cost is purely fast arithmetic instead
+
+43:00
+of slow memory operations.
+
+43:05
+Airing the two algorithms, the main difference on the left
+
+43:07
+is that the loop is much tighter,
+
+43:09
+and it doesn't involve reading and writing data.
+
+43:11
+In the end, the profiler tells me
+
+43:13
+I'm calculating twice as fast as the old algorithm.
+
+43:16
+Even though the arithmetic is much faster,
+
+43:18
+there are other overheads, as an end to end number.
+
+43:20
+But a factor 2 end to end speed up for a simple algorithm
+
+43:23
+change is pretty good.
+
+43:28
+There we go.
+
+43:29
+That's how to write a CUDA program.
+
+43:30
+So to recap, first you figure out the algorithm
+
+43:34
+you're going to write.
+
+43:36
+That lets you then figure out how to break it down
+
+43:38
+into a grid of blocks that run efficiently on the CPU
+
+43:41
+through this hierarchical subdivision thing.
+
+43:46
+The goal is to write as little code as possible.
+
+43:49
+So we steal the random number generator
+
+43:51
+from the cuRAND library.
+
+43:52
+Or we don't even steal it.
+
+43:53
+We just use it.
+
+43:55
+And then we do steal the pretty display logic
+
+43:57
+from the OceanFFT CUDA sample, which we hijack.
+
+44:01
+The most important thing is to make sure
+
+44:03
+that our data stays on the GPU.
+
+44:05
+But when we absolutely must copy it between the GPU and the CPU,
+
+44:09
+you want to set up your memory correctly
+
+44:11
+so that the PCI bus is not a bottleneck.
+
+44:16
+Once again, if the only thing you take away from this
+
+44:19
+is that you spend a day to learn the Nsight tools,
+
+44:21
+that's all you need to do to make me happy.
+
+44:25
+We've done all of our algorithm.
+
+44:26
+We can start thinking about optimizing
+
+44:28
+it to go much faster.
+
+44:36
+That's it.
+
+44:37
+I'll leave you with the flyover endless landscape
+
+44:40
+that we set out to create 45 minutes ago.
+
+44:43
+The total amount of CUDA code in this whole thing
+
+44:46
+comes to 111 lines, including comments.
+
+44:50
+But the trick has been to realize
+
+44:52
+that CUDA is a whole platform of libraries and abstraction
+
+44:55
+layers and existing code that I can call on,
+
+44:58
+so that we are only writing the exact part that we
+
+45:01
+need to focus on.
+
+45:03
+Don't reinvent wheels.
+
+45:05
+Make all the use you can of these libraries
+
+45:06
+that other people have spent years tuning,
+
+45:08
+so that you don't have to.
+
+45:11
+And I mean it.
+
+45:12
+This was my first ever CUDA program.
+
+45:15
+And this time around, this is 111 lines of code
+
+45:18
+that I wrote in a single weekend.
+
+45:20
+I'm
+
+45:20
+Going to try and get this included as a CUDA sample
+
+45:22
+on GitHub, so that you can play with the code as well.
+
+45:25
+And I've obviously glossed over some of the details.
+
+45:27
+And I did clean up a bit of the FFT code,
+
+45:30
+because with limited time, I couldn't go over everything.
+
+45:32
+But I hope I've gone over the key pieces to remember.
+
+45:34
+So thank you all so much for watching.
+
+45:37
+I hope this has been as interesting for you
+
+45:39
+as it was fun for me to recreate my first ever program.
+
+45:41
+Have a great GTC.
+

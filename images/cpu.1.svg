@@ -1,0 +1,1841 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1200" height="326" onload="init(evt)" viewBox="0 0 1200 326" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<!-- Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples. -->
+<!-- NOTES:  -->
+<defs>
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
+		<stop stop-color="#eeeeee" offset="5%" />
+		<stop stop-color="#eeeeb0" offset="95%" />
+	</linearGradient>
+</defs>
+<style type="text/css">
+	text { font-family:Verdana; font-size:12px; fill:rgb(0,0,0); }
+	#search, #ignorecase { opacity:0.1; cursor:pointer; }
+	#search:hover, #search.show, #ignorecase:hover, #ignorecase.show { opacity:1; }
+	#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+	#title { text-anchor:middle; font-size:17px}
+	#unzoom { cursor:pointer; }
+	#frames > *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+	.hide { display:none; }
+	.parent { opacity:0.5; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	"use strict";
+	var details, searchbtn, unzoombtn, matchedtxt, svg, searching, currentSearchTerm, ignorecase, ignorecaseBtn;
+	function init(evt) {
+		details = document.getElementById("details").firstChild;
+		searchbtn = document.getElementById("search");
+		ignorecaseBtn = document.getElementById("ignorecase");
+		unzoombtn = document.getElementById("unzoom");
+		matchedtxt = document.getElementById("matched");
+		svg = document.getElementsByTagName("svg")[0];
+		searching = 0;
+		currentSearchTerm = null;
+
+		// use GET parameters to restore a flamegraphs state.
+		var params = get_params();
+		if (params.x && params.y)
+			zoom(find_group(document.querySelector('[x="' + params.x + '"][y="' + params.y + '"]')));
+                if (params.s) search(params.s);
+	}
+
+	// event listeners
+	window.addEventListener("click", function(e) {
+		var target = find_group(e.target);
+		if (target) {
+			if (target.nodeName == "a") {
+				if (e.ctrlKey === false) return;
+				e.preventDefault();
+			}
+			if (target.classList.contains("parent")) unzoom(true);
+			zoom(target);
+			if (!document.querySelector('.parent')) {
+				// we have basically done a clearzoom so clear the url
+				var params = get_params();
+				if (params.x) delete params.x;
+				if (params.y) delete params.y;
+				history.replaceState(null, null, parse_params(params));
+				unzoombtn.classList.add("hide");
+				return;
+			}
+
+			// set parameters for zoom state
+			var el = target.querySelector("rect");
+			if (el && el.attributes && el.attributes.y && el.attributes._orig_x) {
+				var params = get_params()
+				params.x = el.attributes._orig_x.value;
+				params.y = el.attributes.y.value;
+				history.replaceState(null, null, parse_params(params));
+			}
+		}
+		else if (e.target.id == "unzoom") clearzoom();
+		else if (e.target.id == "search") search_prompt();
+		else if (e.target.id == "ignorecase") toggle_ignorecase();
+	}, false)
+
+	// mouse-over for info
+	// show
+	window.addEventListener("mouseover", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = "Function: " + g_to_text(target);
+	}, false)
+
+	// clear
+	window.addEventListener("mouseout", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = ' ';
+	}, false)
+
+	// ctrl-F for search
+	// ctrl-I to toggle case-sensitive search
+	window.addEventListener("keydown",function (e) {
+		if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+			e.preventDefault();
+			search_prompt();
+		}
+		else if (e.ctrlKey && e.keyCode === 73) {
+			e.preventDefault();
+			toggle_ignorecase();
+		}
+	}, false)
+
+	// functions
+	function get_params() {
+		var params = {};
+		var paramsarr = window.location.search.substr(1).split('&');
+		for (var i = 0; i < paramsarr.length; ++i) {
+			var tmp = paramsarr[i].split("=");
+			if (!tmp[0] || !tmp[1]) continue;
+			params[tmp[0]]  = decodeURIComponent(tmp[1]);
+		}
+		return params;
+	}
+	function parse_params(params) {
+		var uri = "?";
+		for (var key in params) {
+			uri += key + '=' + encodeURIComponent(params[key]) + '&';
+		}
+		if (uri.slice(-1) == "&")
+			uri = uri.substring(0, uri.length - 1);
+		if (uri == '?')
+			uri = window.location.href.split('?')[0];
+		return uri;
+	}
+	function find_child(node, selector) {
+		var children = node.querySelectorAll(selector);
+		if (children.length) return children[0];
+	}
+	function find_group(node) {
+		var parent = node.parentElement;
+		if (!parent) return;
+		if (parent.id == "frames") return node;
+		return find_group(parent);
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_" + attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_" + attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_" + attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function g_to_text(e) {
+		var text = find_child(e, "title").firstChild.nodeValue;
+		return (text)
+	}
+	function g_to_func(e) {
+		var func = g_to_text(e);
+		// if there's any manipulation we want to do to the function
+		// name before it's searched, do it here before returning.
+		return (func);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes.width.value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+		t.attributes.x.value = parseFloat(r.attributes.x.value) + 3;
+
+		// Smaller than this size won't fit anything
+		if (w < 2 * 12 * 0.59) {
+			t.textContent = "";
+			return;
+		}
+
+		t.textContent = txt;
+		var sl = t.getSubStringLength(0, txt.length);
+		// check if only whitespace or if we can fit the entire string into width w
+		if (/^ *$/.test(txt) || sl < w)
+			return;
+
+		// this isn't perfect, but gives a good starting point
+		// and avoids calling getSubStringLength too often
+		var start = Math.floor((w/sl) * txt.length);
+		for (var x = start; x > 0; x = x-2) {
+			if (t.getSubStringLength(0, x + 2) <= w) {
+				t.textContent = txt.substring(0, x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+
+	// zoom
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = (parseFloat(e.attributes.x.value) - x - 10) * ratio + 10;
+				if (e.tagName == "text")
+					e.attributes.x.value = find_child(e.parentNode, "rect[x]").attributes.x.value + 3;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseFloat(e.attributes.width.value) * ratio;
+			}
+		}
+
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_child(c[i], x - 10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = 10;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseInt(svg.width.baseVal.value) - (10 * 2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) {
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr.width.value);
+		var xmin = parseFloat(attr.x.value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr.y.value);
+		var ratio = (svg.width.baseVal.value - 2 * 10) / width;
+
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+
+		unzoombtn.classList.remove("hide");
+
+		var el = document.getElementById("frames").children;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a.x.value);
+			var ew = parseFloat(a.width.value);
+			var upstack;
+			// Is it an ancestor
+			if (0 == 0) {
+				upstack = parseFloat(a.y.value) > ymin;
+			} else {
+				upstack = parseFloat(a.y.value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.classList.add("parent");
+					zoom_parent(e);
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.classList.add("hide");
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.classList.add("hide");
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					update_text(e);
+				}
+			}
+		}
+		search();
+	}
+	function unzoom(dont_update_text) {
+		unzoombtn.classList.add("hide");
+		var el = document.getElementById("frames").children;
+		for(var i = 0; i < el.length; i++) {
+			el[i].classList.remove("parent");
+			el[i].classList.remove("hide");
+			zoom_reset(el[i]);
+			if(!dont_update_text) update_text(el[i]);
+		}
+		search();
+	}
+	function clearzoom() {
+		unzoom();
+
+		// remove zoom state
+		var params = get_params();
+		if (params.x) delete params.x;
+		if (params.y) delete params.y;
+		history.replaceState(null, null, parse_params(params));
+	}
+
+	// search
+	function toggle_ignorecase() {
+		ignorecase = !ignorecase;
+		if (ignorecase) {
+			ignorecaseBtn.classList.add("show");
+		} else {
+			ignorecaseBtn.classList.remove("show");
+		}
+		reset_search();
+		search();
+	}
+	function reset_search() {
+		var el = document.querySelectorAll("#frames rect");
+		for (var i = 0; i < el.length; i++) {
+			orig_load(el[i], "fill")
+		}
+		var params = get_params();
+		delete params.s;
+		history.replaceState(null, null, parse_params(params));
+	}
+	function search_prompt() {
+		if (!searching) {
+			var term = prompt("Enter a search term (regexp " +
+			    "allowed, eg: ^ext4_)"
+			    + (ignorecase ? ", ignoring case" : "")
+			    + "\nPress Ctrl-i to toggle case sensitivity", "");
+			if (term != null) search(term);
+		} else {
+			reset_search();
+			searching = 0;
+			currentSearchTerm = null;
+			searchbtn.classList.remove("show");
+			searchbtn.firstChild.nodeValue = "Search"
+			matchedtxt.classList.add("hide");
+			matchedtxt.firstChild.nodeValue = ""
+		}
+	}
+	function search(term) {
+		if (term) currentSearchTerm = term;
+
+		var re = new RegExp(currentSearchTerm, ignorecase ? 'i' : '');
+		var el = document.getElementById("frames").children;
+		var matches = new Object();
+		var maxwidth = 0;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var func = g_to_func(e);
+			var rect = find_child(e, "rect");
+			if (func == null || rect == null)
+				continue;
+
+			// Save max width. Only works as we have a root frame
+			var w = parseFloat(rect.attributes.width.value);
+			if (w > maxwidth)
+				maxwidth = w;
+
+			if (func.match(re)) {
+				// highlight
+				var x = parseFloat(rect.attributes.x.value);
+				orig_save(rect, "fill");
+				rect.attributes.fill.value = "rgb(230,0,230)";
+
+				// remember matches
+				if (matches[x] == undefined) {
+					matches[x] = w;
+				} else {
+					if (w > matches[x]) {
+						// overwrite with parent
+						matches[x] = w;
+					}
+				}
+				searching = 1;
+			}
+		}
+		if (!searching)
+			return;
+		var params = get_params();
+		params.s = currentSearchTerm;
+		history.replaceState(null, null, parse_params(params));
+
+		searchbtn.classList.add("show");
+		searchbtn.firstChild.nodeValue = "Reset Search";
+
+		// calculate percent matched, excluding vertical overlap
+		var count = 0;
+		var lastx = -1;
+		var lastw = 0;
+		var keys = Array();
+		for (k in matches) {
+			if (matches.hasOwnProperty(k))
+				keys.push(k);
+		}
+		// sort the matched frames by their x location
+		// ascending, then width descending
+		keys.sort(function(a, b){
+			return a - b;
+		});
+		// Step through frames saving only the biggest bottom-up frames
+		// thanks to the sort order. This relies on the tree property
+		// where children are always smaller than their parents.
+		var fudge = 0.0001;	// JavaScript floating point
+		for (var k in keys) {
+			var x = parseFloat(keys[k]);
+			var w = matches[keys[k]];
+			if (x >= lastx + lastw - fudge) {
+				count += w;
+				lastx = x;
+				lastw = w;
+			}
+		}
+		// display matched percent
+		matchedtxt.classList.remove("hide");
+		var pct = 100 * count / maxwidth;
+		if (pct != 100) pct = pct.toFixed(1)
+		matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+	}
+]]>
+</script>
+<rect x="0.0" y="0" width="1200.0" height="326.0" fill="url(#background)"  />
+<text id="title" x="600.00" y="24" >Flame Graph</text>
+<text id="details" x="10.00" y="309" > </text>
+<text id="unzoom" x="10.00" y="24" class="hide">Reset Zoom</text>
+<text id="search" x="1090.00" y="24" >Search</text>
+<text id="ignorecase" x="1174.00" y="24" >ic</text>
+<text id="matched" x="1090.00" y="309" > </text>
+<g id="frames">
+<g >
+<title>bthread::TaskControl::steal_task (326,223 samples, 0.48%)</title><rect x="514.6" y="117" width="5.7" height="15.0" fill="rgb(229,229,39)" rx="2" ry="2" />
+<text  x="517.57" y="127.5" ></text>
+</g>
+<g >
+<title>brpc::NamingServiceThread::RunThis (1,385,304 samples, 2.05%)</title><rect x="504.5" y="213" width="24.2" height="15.0" fill="rgb(235,150,10)" rx="2" ry="2" />
+<text  x="507.46" y="223.5" >b..</text>
+</g>
+<g >
+<title>tensorflow::(anonymous namespace)::ExecutorState&lt;tensorflow::PropagatorState&gt;::NodeDone (126,526 samples, 0.19%)</title><rect x="475.4" y="165" width="2.2" height="15.0" fill="rgb(224,151,13)" rx="2" ry="2" />
+<text  x="478.38" y="175.5" ></text>
+</g>
+<g >
+<title>Eigen::internal::gemm_pack_colmajor_block&lt;float, long, Eigen::internal::TensorContractionSubMapper&lt;float, long, 0, Eigen::TensorEvaluator&lt;Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::ThreadPoolDevice&gt;, Eigen::array&lt;long, 1ul&gt;, Eigen::array&lt;long, 1ul&gt;, 8, true, false, 0, Eigen::MakePointer&gt;, 0&gt;::operator (205,304 samples, 0.30%)</title><rect x="471.8" y="37" width="3.6" height="15.0" fill="rgb(207,107,13)" rx="2" ry="2" />
+<text  x="474.79" y="47.5" ></text>
+</g>
+<g >
+<title>je_emap_update_edata_state (88,595 samples, 0.13%)</title><rect x="1186.7" y="245" width="1.6" height="15.0" fill="rgb(241,114,20)" rx="2" ry="2" />
+<text  x="1189.72" y="255.5" ></text>
+</g>
+<g >
+<title>brpc::Server::UpdateDerivedVars (146,903 samples, 0.22%)</title><rect x="548.2" y="213" width="2.5" height="15.0" fill="rgb(249,19,53)" rx="2" ry="2" />
+<text  x="551.16" y="223.5" ></text>
+</g>
+<g >
+<title>Eigen::internal::TensorExecutor&lt;Eigen::TensorAssignOp&lt;Eigen::TensorMap&lt;Eigen::Tensor&lt;float, 2, 1, long&gt;, 16, Eigen::MakePointer&gt;, Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const&gt; const, Eigen::ThreadPoolDevice, true,  (205,304 samples, 0.30%)</title><rect x="471.8" y="133" width="3.6" height="15.0" fill="rgb(254,89,48)" rx="2" ry="2" />
+<text  x="474.79" y="143.5" ></text>
+</g>
+<g >
+<title>Eigen::ThreadPoolTempl&lt;tensorflow::thread::EigenEnvironment&gt;::Schedule (388,187 samples, 0.57%)</title><rect x="326.4" y="149" width="6.8" height="15.0" fill="rgb(251,27,32)" rx="2" ry="2" />
+<text  x="329.41" y="159.5" ></text>
+</g>
+<g >
+<title>std::_Function_handler&lt;void  (142,045 samples, 0.21%)</title><rect x="460.2" y="85" width="2.5" height="15.0" fill="rgb(226,141,46)" rx="2" ry="2" />
+<text  x="463.21" y="95.5" ></text>
+</g>
+<g >
+<title>larc::RunFunction&lt;false&gt; (1,347,947 samples, 2.00%)</title><rect x="569.5" y="213" width="23.6" height="15.0" fill="rgb(233,71,49)" rx="2" ry="2" />
+<text  x="572.51" y="223.5" >l..</text>
+</g>
+<g >
+<title>std::_Function_handler&lt;void  (3,737,691 samples, 5.53%)</title><rect x="393.4" y="165" width="65.3" height="15.0" fill="rgb(227,49,2)" rx="2" ry="2" />
+<text  x="396.37" y="175.5" >std::_F..</text>
+</g>
+<g >
+<title>tensorflow::thread::ThreadPool::ParallelFor (82,351 samples, 0.12%)</title><rect x="468.8" y="101" width="1.5" height="15.0" fill="rgb(250,30,4)" rx="2" ry="2" />
+<text  x="471.83" y="111.5" ></text>
+</g>
+<g >
+<title>dnnl::impl::cpu::extended_sgemm (154,116 samples, 0.23%)</title><rect x="323.7" y="85" width="2.7" height="15.0" fill="rgb(251,137,44)" rx="2" ry="2" />
+<text  x="326.72" y="95.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;long, std::allocator&lt;long&gt; &gt;::_M_default_append (88,513 samples, 0.13%)</title><rect x="440.6" y="133" width="1.5" height="15.0" fill="rgb(219,80,10)" rx="2" ry="2" />
+<text  x="443.57" y="143.5" ></text>
+</g>
+<g >
+<title>std::_Function_handler&lt;void  (142,045 samples, 0.21%)</title><rect x="460.2" y="101" width="2.5" height="15.0" fill="rgb(238,171,25)" rx="2" ry="2" />
+<text  x="463.21" y="111.5" ></text>
+</g>
+<g >
+<title>Eigen::internal::gemm_pack_colmajor_block&lt;float, long, Eigen::internal::TensorContractionSubMapper&lt;float, long, 1, Eigen::TensorEvaluator&lt;Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::ThreadPoolDevice&gt;, Eigen::array&lt;long, 1ul&gt;, Eigen::array&lt;long, 1ul&gt;, 8, true, false, 0, Eigen::MakePointer&gt;, 0&gt;::operator (385,020 samples, 0.57%)</title><rect x="369.0" y="165" width="6.7" height="15.0" fill="rgb(249,213,43)" rx="2" ry="2" />
+<text  x="371.97" y="175.5" ></text>
+</g>
+<g >
+<title>brpc::Socket::DoRead (109,659 samples, 0.16%)</title><rect x="561.7" y="181" width="1.9" height="15.0" fill="rgb(242,177,44)" rx="2" ry="2" />
+<text  x="564.73" y="191.5" ></text>
+</g>
+<g >
+<title>pthread_mutex_lock (62,175 samples, 0.09%)</title><rect x="219.0" y="213" width="1.1" height="15.0" fill="rgb(247,19,27)" rx="2" ry="2" />
+<text  x="221.98" y="223.5" ></text>
+</g>
+<g >
+<title>brpc::Controller::OnVersionedRPCReturned (467,058 samples, 0.69%)</title><rect x="551.6" y="149" width="8.1" height="15.0" fill="rgb(227,62,4)" rx="2" ry="2" />
+<text  x="554.56" y="159.5" ></text>
+</g>
+<g >
+<title>lambda::framework::BreakdownClient::fnUpdateBreakdownQueue (454,011 samples, 0.67%)</title><rect x="184.3" y="229" width="8.0" height="15.0" fill="rgb(242,176,27)" rx="2" ry="2" />
+<text  x="187.34" y="239.5" ></text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Relu&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::EvalParallelContext&lt;Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Relu&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::NoCallback, true, true, false, 0&gt;::pack_lhs (385,020 samples, 0.57%)</title><rect x="369.0" y="181" width="6.7" height="15.0" fill="rgb(244,96,41)" rx="2" ry="2" />
+<text  x="371.97" y="191.5" ></text>
+</g>
+<g >
+<title>brpc::policy::BackupRequestDScheduler::report_event (64,359 samples, 0.10%)</title><rect x="535.1" y="133" width="1.1" height="15.0" fill="rgb(215,3,21)" rx="2" ry="2" />
+<text  x="538.06" y="143.5" ></text>
+</g>
+<g >
+<title>Eigen::ThreadPoolTempl&lt;tensorflow::thread::EigenEnvironment&gt;::Schedule (199,328 samples, 0.30%)</title><rect x="298.9" y="133" width="3.5" height="15.0" fill="rgb(245,171,49)" rx="2" ry="2" />
+<text  x="301.91" y="143.5" ></text>
+</g>
+<g >
+<title>bthread::ready_to_run_from_timer_thread (327,932 samples, 0.49%)</title><rect x="624.8" y="181" width="5.8" height="15.0" fill="rgb(245,97,23)" rx="2" ry="2" />
+<text  x="627.83" y="191.5" ></text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::EvalParallelContext&lt;Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::NoCallback, true, true, false, 0&gt;::pack_rhs (116,262 samples, 0.17%)</title><rect x="321.7" y="165" width="2.0" height="15.0" fill="rgb(239,91,33)" rx="2" ry="2" />
+<text  x="324.69" y="175.5" ></text>
+</g>
+<g >
+<title>brpc::policy::EdsNamingService::RunNamingService (1,280,643 samples, 1.90%)</title><rect x="506.3" y="181" width="22.4" height="15.0" fill="rgb(217,199,34)" rx="2" ry="2" />
+<text  x="509.29" y="191.5" >b..</text>
+</g>
+<g >
+<title>[unknown] (359,097 samples, 0.53%)</title><rect x="140.7" y="197" width="6.3" height="15.0" fill="rgb(207,24,28)" rx="2" ry="2" />
+<text  x="143.70" y="207.5" ></text>
+</g>
+<g >
+<title>brpc::policy::ProcessRedisResponse (114,769 samples, 0.17%)</title><rect x="559.7" y="165" width="2.0" height="15.0" fill="rgb(251,189,47)" rx="2" ry="2" />
+<text  x="562.72" y="175.5" ></text>
+</g>
+<g >
+<title>Eigen::internal::gemm_pack_colmajor_block&lt;float, long, Eigen::internal::TensorContractionSubMapper&lt;float, long, 1, Eigen::TensorEvaluator&lt;Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::ThreadPoolDevice&gt;, Eigen::array&lt;long, 1ul&gt;, Eigen::array&lt;long, 1ul&gt;, 8, true, false, 0, Eigen::MakePointer&gt;, 0&gt;::operator (670,904 samples, 0.99%)</title><rect x="337.1" y="165" width="11.7" height="15.0" fill="rgb(236,87,53)" rx="2" ry="2" />
+<text  x="340.09" y="175.5" ></text>
+</g>
+<g >
+<title>Eigen::internal::TensorContractionKernel&lt;float, float, float, long, Eigen::internal::blas_data_mapper&lt;float, long, 0, 0, 1&gt;, Eigen::internal::TensorContractionInputMapper&lt;float, long, 1, Eigen::TensorEvaluator&lt;Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::ThreadPoolDevice&gt;, Eigen::array&lt;long, 1ul&gt;, Eigen::array&lt;long, 1ul&gt;, 8, true, false, 0, Eigen::MakePointer&gt;, Eigen::internal::TensorContractionInputMapper&lt;float, long, 0, Eigen::TensorEvaluator&lt;Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::ThreadPoolDevice&gt;, Eigen::array&lt;long, 1ul&gt;, Eigen::array&lt;long, 1ul&gt;, 8, true, false, 0, Eigen::MakePointer&gt; &gt;::packRhs (25,751 samples, 0.04%)</title><rect x="356.1" y="181" width="0.5" height="15.0" fill="rgb(233,139,47)" rx="2" ry="2" />
+<text  x="359.10" y="191.5" ></text>
+</g>
+<g >
+<title>__tls_get_addr (109,659 samples, 0.16%)</title><rect x="561.7" y="149" width="1.9" height="15.0" fill="rgb(242,180,52)" rx="2" ry="2" />
+<text  x="564.73" y="159.5" ></text>
+</g>
+<g >
+<title>void tensorflow::ConcatCPUImpl&lt;float, tensorflow::(anonymous namespace)::MemCpyCopier&lt;float&gt; &gt; (87,515 samples, 0.13%)</title><rect x="457.1" y="149" width="1.6" height="15.0" fill="rgb(219,66,37)" rx="2" ry="2" />
+<text  x="460.14" y="159.5" ></text>
+</g>
+<g >
+<title>rand (634,511 samples, 0.94%)</title><rect x="224.4" y="229" width="11.1" height="15.0" fill="rgb(223,204,35)" rx="2" ry="2" />
+<text  x="227.39" y="239.5" ></text>
+</g>
+<g >
+<title>__pthread_disable_asynccancel (27,092 samples, 0.04%)</title><rect x="129.5" y="213" width="0.5" height="15.0" fill="rgb(233,92,35)" rx="2" ry="2" />
+<text  x="132.54" y="223.5" ></text>
+</g>
+<g >
+<title>_dl_update_slotinfo (136,057 samples, 0.20%)</title><rect x="605.7" y="181" width="2.3" height="15.0" fill="rgb(239,202,38)" rx="2" ry="2" />
+<text  x="608.65" y="191.5" ></text>
+</g>
+<g >
+<title>[unknown] (161,018 samples, 0.24%)</title><rect x="481.7" y="133" width="2.8" height="15.0" fill="rgb(252,117,15)" rx="2" ry="2" />
+<text  x="484.67" y="143.5" ></text>
+</g>
+<g >
+<title>pthread_rwlock_unlock (138,591 samples, 0.21%)</title><rect x="221.9" y="229" width="2.5" height="15.0" fill="rgb(244,29,4)" rx="2" ry="2" />
+<text  x="224.95" y="239.5" ></text>
+</g>
+<g >
+<title>std::_Function_handler&lt;void  (82,351 samples, 0.12%)</title><rect x="468.8" y="85" width="1.5" height="15.0" fill="rgb(226,75,46)" rx="2" ry="2" />
+<text  x="471.83" y="95.5" ></text>
+</g>
+<g >
+<title>Eigen::internal::TensorContractionKernel&lt;float, float, float, long, Eigen::internal::blas_data_mapper&lt;float, long, 0, 0, 1&gt;, Eigen::internal::TensorContractionInputMapper&lt;float, long, 1, Eigen::TensorEvaluator&lt;Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::ThreadPoolDevice&gt;, Eigen::array&lt;long, 1ul&gt;, Eigen::array&lt;long, 1ul&gt;, 8, true, false, 0, Eigen::MakePointer&gt;, Eigen::internal::TensorContractionInputMapper&lt;float, long, 0, Eigen::TensorEvaluator&lt;Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::ThreadPoolDevice&gt;, Eigen::array&lt;long, 1ul&gt;, Eigen::array&lt;long, 1ul&gt;, 8, true, false, 0, Eigen::MakePointer&gt; &gt;::invoke (154,116 samples, 0.23%)</title><rect x="323.7" y="133" width="2.7" height="15.0" fill="rgb(206,131,38)" rx="2" ry="2" />
+<text  x="326.72" y="143.5" ></text>
+</g>
+<g >
+<title>Eigen::internal::TensorContractionKernel&lt;float, float, float, long, Eigen::internal::blas_data_mapper&lt;float, long, 0, 0, 1&gt;, Eigen::internal::TensorContractionInputMapper&lt;float, long, 1, Eigen::TensorEvaluator&lt;Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::ThreadPoolDevice&gt;, Eigen::array&lt;long, 1ul&gt;, Eigen::array&lt;long, 1ul&gt;, 8, true, false, 0, Eigen::MakePointer&gt;, Eigen::internal::TensorContractionInputMapper&lt;float, long, 0, Eigen::TensorEvaluator&lt;Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::ThreadPoolDevice&gt;, Eigen::array&lt;long, 1ul&gt;, Eigen::array&lt;long, 1ul&gt;, 8, true, false, 0, Eigen::MakePointer&gt; &gt;::invoke (67,265 samples, 0.10%)</title><rect x="379.2" y="181" width="1.2" height="15.0" fill="rgb(223,54,45)" rx="2" ry="2" />
+<text  x="382.20" y="191.5" ></text>
+</g>
+<g >
+<title>async_op::RpcOPBase::ComputeAsync (87,190 samples, 0.13%)</title><rect x="470.3" y="133" width="1.5" height="15.0" fill="rgb(254,106,35)" rx="2" ry="2" />
+<text  x="473.27" y="143.5" ></text>
+</g>
+<g >
+<title>bthread_start_background (87,190 samples, 0.13%)</title><rect x="470.3" y="117" width="1.5" height="15.0" fill="rgb(247,134,42)" rx="2" ry="2" />
+<text  x="473.27" y="127.5" ></text>
+</g>
+<g >
+<title>Eigen::internal::gemm_pack_colmajor_block&lt;float, long, Eigen::internal::TensorContractionSubMapper&lt;float, long, 1, Eigen::TensorEvaluator&lt;Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::ThreadPoolDevice&gt;, Eigen::array&lt;long, 1ul&gt;, Eigen::array&lt;long, 1ul&gt;, 8, true, false, 0, Eigen::MakePointer&gt;, 0&gt;::operator (572,326 samples, 0.85%)</title><rect x="359.0" y="149" width="10.0" height="15.0" fill="rgb(225,145,45)" rx="2" ry="2" />
+<text  x="361.97" y="159.5" ></text>
+</g>
+<g >
+<title>qiao::feature_extract::extract_core (77,991 samples, 0.12%)</title><rect x="439.2" y="133" width="1.4" height="15.0" fill="rgb(228,108,9)" rx="2" ry="2" />
+<text  x="442.21" y="143.5" ></text>
+</g>
+<g >
+<title>bthread::butex_wake_all (114,769 samples, 0.17%)</title><rect x="559.7" y="101" width="2.0" height="15.0" fill="rgb(237,50,4)" rx="2" ry="2" />
+<text  x="562.72" y="111.5" ></text>
+</g>
+<g >
+<title>Eigen::internal::TensorExecutor&lt;Eigen::TensorAssignOp&lt;Eigen::TensorMap&lt;Eigen::Tensor&lt;float, 2, 1, long&gt;, 16, Eigen::MakePointer&gt;, Eigen::TensorCwiseBinaryOp&lt;Eigen::internal::scalar_product_op&lt;float, float&gt;, Eigen::TensorBroadcastingOp&lt;Eigen::IndexList&lt;Eigen::type2index&lt;1l&gt;, int&gt; const, Eigen::TensorReshapingOp&lt;Eigen::IndexList&lt;int, Eigen::type2index&lt;1l&gt; &gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const&gt; const&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const&gt; const&gt; const, Eigen::ThreadPoolDevice, true,  (351,263 samples, 0.52%)</title><rect x="462.7" y="133" width="6.1" height="15.0" fill="rgb(215,63,9)" rx="2" ry="2" />
+<text  x="465.69" y="143.5" ></text>
+</g>
+<g >
+<title>[unknown] (373,014 samples, 0.55%)</title><rect x="487.7" y="149" width="6.5" height="15.0" fill="rgb(220,113,42)" rx="2" ry="2" />
+<text  x="490.69" y="159.5" ></text>
+</g>
+<g >
+<title>Eigen::internal::gemm_pack_colmajor_block&lt;float, long, Eigen::internal::TensorContractionSubMapper&lt;float, long, 0, Eigen::TensorEvaluator&lt;Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::ThreadPoolDevice&gt;, Eigen::array&lt;long, 1ul&gt;, Eigen::array&lt;long, 1ul&gt;, 8, true, false, 0, Eigen::MakePointer&gt;, 0&gt;::operator (85,997 samples, 0.13%)</title><rect x="375.7" y="165" width="1.5" height="15.0" fill="rgb(251,44,3)" rx="2" ry="2" />
+<text  x="378.70" y="175.5" ></text>
+</g>
+<g >
+<title>tensorflow::(anonymous namespace)::ExecutorState&lt;tensorflow::PropagatorState&gt;::Process (1,083,458 samples, 1.60%)</title><rect x="458.7" y="181" width="18.9" height="15.0" fill="rgb(249,166,23)" rx="2" ry="2" />
+<text  x="461.67" y="191.5" ></text>
+</g>
+<g >
+<title>bthread::TaskGroup::start_background&lt;true&gt; (87,190 samples, 0.13%)</title><rect x="470.3" y="101" width="1.5" height="15.0" fill="rgb(229,193,46)" rx="2" ry="2" />
+<text  x="473.27" y="111.5" ></text>
+</g>
+<g >
+<title>nsync::nsync_mu_lock (34,012 samples, 0.05%)</title><rect x="501.0" y="181" width="0.6" height="15.0" fill="rgb(239,127,34)" rx="2" ry="2" />
+<text  x="504.00" y="191.5" ></text>
+</g>
+<g >
+<title>brpc::Controller::EndRPC (430,720 samples, 0.64%)</title><rect x="528.7" y="165" width="7.5" height="15.0" fill="rgb(220,1,13)" rx="2" ry="2" />
+<text  x="531.66" y="175.5" ></text>
+</g>
+<g >
+<title>brpc::policy::ReadThriftMessageBegin (298,083 samples, 0.44%)</title><rect x="537.7" y="181" width="5.2" height="15.0" fill="rgb(251,148,3)" rx="2" ry="2" />
+<text  x="540.72" y="191.5" ></text>
+</g>
+<g >
+<title>brpc::ProcessInputMessage (581,827 samples, 0.86%)</title><rect x="551.6" y="181" width="10.1" height="15.0" fill="rgb(218,173,44)" rx="2" ry="2" />
+<text  x="554.56" y="191.5" ></text>
+</g>
+<g >
+<title>bthread_id_trylock (104,661 samples, 0.15%)</title><rect x="504.5" y="149" width="1.8" height="15.0" fill="rgb(210,33,22)" rx="2" ry="2" />
+<text  x="507.46" y="159.5" ></text>
+</g>
+<g >
+<title>tensorflow::serving::AspiredVersionsManager::GetNextAction (34,012 samples, 0.05%)</title><rect x="501.0" y="197" width="0.6" height="15.0" fill="rgb(237,211,17)" rx="2" ry="2" />
+<text  x="504.00" y="207.5" ></text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::EvalParallelContext&lt;Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::NoCallback, true, true, false, 0&gt;::pack_lhs (1,436,191 samples, 2.13%)</title><rect x="323.7" y="181" width="25.1" height="15.0" fill="rgb(221,1,12)" rx="2" ry="2" />
+<text  x="326.72" y="191.5" >E..</text>
+</g>
+<g >
+<title>[unknown] (47,613 samples, 0.07%)</title><rect x="102.2" y="181" width="0.8" height="15.0" fill="rgb(217,55,28)" rx="2" ry="2" />
+<text  x="105.18" y="191.5" ></text>
+</g>
+<g >
+<title>__tls_get_addr@plt (80,884 samples, 0.12%)</title><rect x="477.6" y="213" width="1.4" height="15.0" fill="rgb(212,159,33)" rx="2" ry="2" />
+<text  x="480.62" y="223.5" ></text>
+</g>
+<g >
+<title>je_eset_remove (51,234 samples, 0.08%)</title><rect x="113.9" y="213" width="0.9" height="15.0" fill="rgb(231,80,29)" rx="2" ry="2" />
+<text  x="116.90" y="223.5" ></text>
+</g>
+<g >
+<title>all (67,543,561 samples, 100%)</title><rect x="10.0" y="277" width="1180.0" height="15.0" fill="rgb(231,149,49)" rx="2" ry="2" />
+<text  x="13.00" y="287.5" ></text>
+</g>
+<g >
+<title>brpc::NamingServiceThread::Run (1,385,304 samples, 2.05%)</title><rect x="504.5" y="197" width="24.2" height="15.0" fill="rgb(226,68,41)" rx="2" ry="2" />
+<text  x="507.46" y="207.5" >b..</text>
+</g>
+<g >
+<title>tensorflow::(anonymous namespace)::ExecutorState&lt;tensorflow::PropagatorState&gt;::BatchProcess (956,932 samples, 1.42%)</title><rect x="458.7" y="165" width="16.7" height="15.0" fill="rgb(233,164,50)" rx="2" ry="2" />
+<text  x="461.67" y="175.5" ></text>
+</g>
+<g >
+<title>CGraph::UThreadPrimary::processTask (58,386 samples, 0.09%)</title><rect x="498.4" y="197" width="1.0" height="15.0" fill="rgb(211,216,11)" rx="2" ry="2" />
+<text  x="501.42" y="207.5" ></text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::EvalParallelContext&lt;Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::NoCallback, true, true, false, 0&gt;::kernel (138,523 samples, 0.21%)</title><rect x="356.6" y="197" width="2.4" height="15.0" fill="rgb(233,2,7)" rx="2" ry="2" />
+<text  x="359.55" y="207.5" ></text>
+</g>
+<g >
+<title>pthread_mutex_lock (376,375 samples, 0.56%)</title><rect x="380.5" y="197" width="6.6" height="15.0" fill="rgb(223,41,29)" rx="2" ry="2" />
+<text  x="383.49" y="207.5" ></text>
+</g>
+<g >
+<title>__memcpy_ssse3 (859,620 samples, 1.27%)</title><rect x="442.1" y="149" width="15.0" height="15.0" fill="rgb(216,183,27)" rx="2" ry="2" />
+<text  x="445.12" y="159.5" ></text>
+</g>
+<g >
+<title>std::_Function_handler&lt;void  (1,347,947 samples, 2.00%)</title><rect x="569.5" y="181" width="23.6" height="15.0" fill="rgb(209,143,31)" rx="2" ry="2" />
+<text  x="572.51" y="191.5" >s..</text>
+</g>
+<g >
+<title>brpc::Socket::HandleEpollOut (58,493 samples, 0.09%)</title><rect x="501.6" y="181" width="1.0" height="15.0" fill="rgb(240,181,45)" rx="2" ry="2" />
+<text  x="504.60" y="191.5" ></text>
+</g>
+<g >
+<title>[unknown] (94,232 samples, 0.14%)</title><rect x="628.9" y="133" width="1.7" height="15.0" fill="rgb(212,179,7)" rx="2" ry="2" />
+<text  x="631.91" y="143.5" ></text>
+</g>
+<g >
+<title>bthread::TaskGroup::sched_to (432,688 samples, 0.64%)</title><rect x="600.5" y="197" width="7.5" height="15.0" fill="rgb(217,184,43)" rx="2" ry="2" />
+<text  x="603.47" y="207.5" ></text>
+</g>
+<g >
+<title>std::num_put&lt;char, std::ostreambuf_iterator&lt;char, std::char_traits&lt;char&gt; &gt; &gt;::~num_put (91,829 samples, 0.14%)</title><rect x="119.0" y="229" width="1.6" height="15.0" fill="rgb(206,82,49)" rx="2" ry="2" />
+<text  x="122.03" y="239.5" ></text>
+</g>
+<g >
+<title>[[vdso]] (170,589 samples, 0.25%)</title><rect x="511.6" y="101" width="3.0" height="15.0" fill="rgb(207,30,47)" rx="2" ry="2" />
+<text  x="514.59" y="111.5" ></text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Relu&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::EvalParallelContext&lt;Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Relu&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::NoCallback, true, true, false, 0&gt;::pack_lhs (572,326 samples, 0.85%)</title><rect x="359.0" y="165" width="10.0" height="15.0" fill="rgb(231,44,30)" rx="2" ry="2" />
+<text  x="361.97" y="175.5" ></text>
+</g>
+<g >
+<title>tensorflow::ConcatCPU&lt;float&gt; (82,351 samples, 0.12%)</title><rect x="468.8" y="133" width="1.5" height="15.0" fill="rgb(253,157,7)" rx="2" ry="2" />
+<text  x="471.83" y="143.5" ></text>
+</g>
+<g >
+<title>google::protobuf::internal::AssignDescriptors (87,144 samples, 0.13%)</title><rect x="186.4" y="133" width="1.5" height="15.0" fill="rgb(221,32,32)" rx="2" ry="2" />
+<text  x="189.40" y="143.5" ></text>
+</g>
+<g >
+<title>bvar::detail::ReducerSampler&lt;bvar::IntRecorder, bvar::Stat, bvar::IntRecorder::AddStat, bvar::IntRecorder::MinusStat&gt;::take_sample (31,777,306 samples, 47.05%)</title><rect x="630.6" y="197" width="555.1" height="15.0" fill="rgb(237,15,41)" rx="2" ry="2" />
+<text  x="633.57" y="207.5" >bvar::detail::ReducerSampler&lt;bvar::IntRecorder, bvar::Stat, bvar::IntRecorde..</text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::EvalParallelContext&lt;Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::NoCallback, true, true, false, 0&gt;::enqueue_packing_helper (205,304 samples, 0.30%)</title><rect x="471.8" y="85" width="3.6" height="15.0" fill="rgb(240,221,32)" rx="2" ry="2" />
+<text  x="474.79" y="95.5" ></text>
+</g>
+<g >
+<title>__lll_unlock_wake_private (107,101 samples, 0.16%)</title><rect x="164.3" y="229" width="1.8" height="15.0" fill="rgb(229,98,41)" rx="2" ry="2" />
+<text  x="167.27" y="239.5" ></text>
+</g>
+<g >
+<title>bthread::TaskControl::steal_task (335,902 samples, 0.50%)</title><rect x="563.6" y="197" width="5.9" height="15.0" fill="rgb(244,191,44)" rx="2" ry="2" />
+<text  x="566.64" y="207.5" ></text>
+</g>
+<g >
+<title>tensorflow::serving::AspiredVersionsManager::InvokePolicyAndExecuteAction (34,012 samples, 0.05%)</title><rect x="501.0" y="213" width="0.6" height="15.0" fill="rgb(239,45,28)" rx="2" ry="2" />
+<text  x="504.00" y="223.5" ></text>
+</g>
+<g >
+<title>bthread::TaskGroup::usleep (1,178,852 samples, 1.75%)</title><rect x="508.1" y="149" width="20.6" height="15.0" fill="rgb(235,166,0)" rx="2" ry="2" />
+<text  x="511.07" y="159.5" ></text>
+</g>
+<g >
+<title>std::_Function_handler&lt;void  (88,269 samples, 0.13%)</title><rect x="458.7" y="101" width="1.5" height="15.0" fill="rgb(220,7,10)" rx="2" ry="2" />
+<text  x="461.67" y="111.5" ></text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorMap&lt;Eigen::Tensor&lt;float, 2, 1, long&gt;, 16, Eigen::MakePointer&gt;, Eigen::ThreadPoolDevice&gt;::writeBlock&lt;Eigen::internal::TensorCwiseBinaryBlock&lt;Eigen::internal::scalar_product_op&lt;float, float&gt;, Eigen::internal::TensorMaterializedBlock&lt;float, 2, 1, long&gt;, Eigen::internal::TensorMaterializedBlock&lt;float, 2, 1, long&gt; &gt; &gt; (141,862 samples, 0.21%)</title><rect x="462.7" y="101" width="2.5" height="15.0" fill="rgb(248,132,46)" rx="2" ry="2" />
+<text  x="465.69" y="111.5" ></text>
+</g>
+<g >
+<title>[unknown] (125,294 samples, 0.19%)</title><rect x="353.9" y="117" width="2.2" height="15.0" fill="rgb(226,165,20)" rx="2" ry="2" />
+<text  x="356.91" y="127.5" ></text>
+</g>
+<g >
+<title>free (83,835 samples, 0.12%)</title><rect x="546.7" y="181" width="1.5" height="15.0" fill="rgb(234,180,23)" rx="2" ry="2" />
+<text  x="549.70" y="191.5" ></text>
+</g>
+<g >
+<title>brpc::Socket::Address (22,981 samples, 0.03%)</title><rect x="502.6" y="165" width="0.4" height="15.0" fill="rgb(233,171,27)" rx="2" ry="2" />
+<text  x="505.62" y="175.5" ></text>
+</g>
+<g >
+<title>[unknown] (281,572 samples, 0.42%)</title><rect x="489.3" y="117" width="4.9" height="15.0" fill="rgb(232,34,48)" rx="2" ry="2" />
+<text  x="492.28" y="127.5" ></text>
+</g>
+<g >
+<title>lambda::framework::RedisClient::get (335,264 samples, 0.50%)</title><rect x="186.4" y="213" width="5.9" height="15.0" fill="rgb(233,179,39)" rx="2" ry="2" />
+<text  x="189.40" y="223.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;std::string, std::allocator&lt;std::string&gt; &gt;::_M_realloc_insert&lt;std::string const&amp;&gt; (88,066 samples, 0.13%)</title><rect x="499.5" y="165" width="1.5" height="15.0" fill="rgb(216,141,39)" rx="2" ry="2" />
+<text  x="502.46" y="175.5" ></text>
+</g>
+<g >
+<title>brpc::Controller::ResetNonPods (169,378 samples, 0.25%)</title><rect x="582.2" y="101" width="2.9" height="15.0" fill="rgb(226,12,47)" rx="2" ry="2" />
+<text  x="585.16" y="111.5" ></text>
+</g>
+<g >
+<title>Eigen::ThreadPoolDevice::parallelFor (209,401 samples, 0.31%)</title><rect x="465.2" y="117" width="3.6" height="15.0" fill="rgb(212,46,16)" rx="2" ry="2" />
+<text  x="468.17" y="127.5" ></text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::EvalParallelContext&lt;Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::NoCallback, true, true, false, 0&gt;::signal_kernel (542,303 samples, 0.80%)</title><rect x="323.7" y="165" width="9.5" height="15.0" fill="rgb(210,155,32)" rx="2" ry="2" />
+<text  x="326.72" y="175.5" ></text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorAssignOp&lt;Eigen::TensorMap&lt;Eigen::Tensor&lt;float, 2, 1, long&gt;, 16, Eigen::MakePointer&gt;, Eigen::TensorCwiseBinaryOp&lt;Eigen::internal::scalar_product_op&lt;float, float&gt;, Eigen::TensorBroadcastingOp&lt;Eigen::IndexList&lt;Eigen::type2index&lt;1l&gt;, int&gt; const, Eigen::TensorReshapingOp&lt;Eigen::IndexList&lt;int, Eigen::type2index&lt;1l&gt; &gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const&gt; const&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::evalBlock (141,862 samples, 0.21%)</title><rect x="462.7" y="117" width="2.5" height="15.0" fill="rgb(230,149,3)" rx="2" ry="2" />
+<text  x="465.69" y="127.5" ></text>
+</g>
+<g >
+<title>brpc::Controller::OnVersionedRPCReturned (114,769 samples, 0.17%)</title><rect x="559.7" y="149" width="2.0" height="15.0" fill="rgb(222,217,19)" rx="2" ry="2" />
+<text  x="562.72" y="159.5" ></text>
+</g>
+<g >
+<title>Eigen::internal::gemm_pack_colmajor_block&lt;float, long, Eigen::internal::TensorContractionSubMapper&lt;float, long, 0, Eigen::TensorEvaluator&lt;Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::ThreadPoolDevice&gt;, Eigen::array&lt;long, 1ul&gt;, Eigen::array&lt;long, 1ul&gt;, 8, true, false, 0, Eigen::MakePointer&gt;, 0&gt;::operator (116,262 samples, 0.17%)</title><rect x="321.7" y="149" width="2.0" height="15.0" fill="rgb(207,85,2)" rx="2" ry="2" />
+<text  x="324.69" y="159.5" ></text>
+</g>
+<g >
+<title>dnnl::impl::cpu::x64::adjust_thread_count&lt;float&gt; (25,981 samples, 0.04%)</title><rect x="358.5" y="101" width="0.5" height="15.0" fill="rgb(243,212,36)" rx="2" ry="2" />
+<text  x="361.52" y="111.5" ></text>
+</g>
+<g >
+<title>LambdaServer (67,355,527 samples, 99.72%)</title><rect x="10.0" y="261" width="1176.7" height="15.0" fill="rgb(223,117,33)" rx="2" ry="2" />
+<text  x="13.00" y="271.5" >LambdaServer</text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::EvalParallelContext&lt;Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::NoCallback, true, true, false, 0&gt;::signal_kernel (199,328 samples, 0.30%)</title><rect x="298.9" y="149" width="3.5" height="15.0" fill="rgb(227,17,10)" rx="2" ry="2" />
+<text  x="301.91" y="159.5" ></text>
+</g>
+<g >
+<title>dnnl::impl::cpu::check_gemm_input (154,116 samples, 0.23%)</title><rect x="323.7" y="69" width="2.7" height="15.0" fill="rgb(213,10,10)" rx="2" ry="2" />
+<text  x="326.72" y="79.5" ></text>
+</g>
+<g >
+<title>__tls_get_addr_slow (38,443 samples, 0.06%)</title><rect x="620.9" y="181" width="0.7" height="15.0" fill="rgb(218,218,2)" rx="2" ry="2" />
+<text  x="623.93" y="191.5" ></text>
+</g>
+<g >
+<title>brpc::Controller::Controller (88,432 samples, 0.13%)</title><rect x="189.8" y="197" width="1.6" height="15.0" fill="rgb(212,82,7)" rx="2" ry="2" />
+<text  x="192.84" y="207.5" ></text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorBroadcastingOp&lt;Eigen::IndexList&lt;Eigen::type2index&lt;1l&gt;, int&gt; const, Eigen::TensorReshapingOp&lt;Eigen::IndexList&lt;int, Eigen::type2index&lt;1l&gt; &gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::BroadcastBlock (209,401 samples, 0.31%)</title><rect x="465.2" y="53" width="3.6" height="15.0" fill="rgb(205,159,19)" rx="2" ry="2" />
+<text  x="468.17" y="63.5" ></text>
+</g>
+<g >
+<title>bthread_id_join (127,265 samples, 0.19%)</title><rect x="574.9" y="117" width="2.3" height="15.0" fill="rgb(227,84,6)" rx="2" ry="2" />
+<text  x="577.94" y="127.5" ></text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorBroadcastingOp&lt;Eigen::IndexList&lt;Eigen::type2index&lt;1l&gt;, int&gt; const, Eigen::TensorReshapingOp&lt;Eigen::IndexList&lt;int, Eigen::type2index&lt;1l&gt; &gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::block (209,401 samples, 0.31%)</title><rect x="465.2" y="69" width="3.6" height="15.0" fill="rgb(245,224,26)" rx="2" ry="2" />
+<text  x="468.17" y="79.5" ></text>
+</g>
+<g >
+<title>pthread_mutex_lock (42,329 samples, 0.06%)</title><rect x="379.6" y="69" width="0.8" height="15.0" fill="rgb(222,129,37)" rx="2" ry="2" />
+<text  x="382.64" y="79.5" ></text>
+</g>
+<g >
+<title>brpc::Channel::CallMethod (218,453 samples, 0.32%)</title><rect x="577.2" y="101" width="3.8" height="15.0" fill="rgb(232,104,29)" rx="2" ry="2" />
+<text  x="580.17" y="111.5" ></text>
+</g>
+<g >
+<title>bthread::TaskControl::worker_thread (1,396,048 samples, 2.07%)</title><rect x="600.4" y="229" width="24.4" height="15.0" fill="rgb(245,4,5)" rx="2" ry="2" />
+<text  x="603.44" y="239.5" >b..</text>
+</g>
+<g >
+<title>Eigen::internal::TensorExecutor&lt;Eigen::TensorAssignOp&lt;Eigen::TensorMap&lt;Eigen::Tensor&lt;float, 1, 1, long&gt;, 16, Eigen::MakePointer&gt;, Eigen::TensorCwiseUnaryOp&lt;Eigen::internal::scalar_right&lt;float, float, Eigen::internal::scalar_product_op&lt;float, float&gt;, true&gt;, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 1, 1, long&gt;, 16, Eigen::MakePointer&gt; const&gt; const&gt; const, Eigen::ThreadPoolDevice, true,  (142,045 samples, 0.21%)</title><rect x="460.2" y="133" width="2.5" height="15.0" fill="rgb(246,215,6)" rx="2" ry="2" />
+<text  x="463.21" y="143.5" ></text>
+</g>
+<g >
+<title>brpc::NamingServiceThread::Actions::ResetServers (104,661 samples, 0.15%)</title><rect x="504.5" y="165" width="1.8" height="15.0" fill="rgb(227,81,42)" rx="2" ry="2" />
+<text  x="507.46" y="175.5" ></text>
+</g>
+<g >
+<title>std::_Function_handler&lt;void  (13,942,447 samples, 20.64%)</title><rect x="235.5" y="229" width="243.5" height="15.0" fill="rgb(219,79,37)" rx="2" ry="2" />
+<text  x="238.47" y="239.5" >std::_Function_handler&lt;void </text>
+</g>
+<g >
+<title>syscall (94,232 samples, 0.14%)</title><rect x="628.9" y="149" width="1.7" height="15.0" fill="rgb(211,157,38)" rx="2" ry="2" />
+<text  x="631.91" y="159.5" ></text>
+</g>
+<g >
+<title>je_pai_alloc_batch_default (195,478 samples, 0.29%)</title><rect x="113.9" y="229" width="3.4" height="15.0" fill="rgb(244,92,34)" rx="2" ry="2" />
+<text  x="116.90" y="239.5" ></text>
+</g>
+<g >
+<title>tensorflow::(anonymous namespace)::ExecutorState&lt;tensorflow::PropagatorState&gt;::ProcessOutputs (200,199 samples, 0.30%)</title><rect x="589.6" y="149" width="3.5" height="15.0" fill="rgb(223,89,44)" rx="2" ry="2" />
+<text  x="592.56" y="159.5" ></text>
+</g>
+<g >
+<title>brpc::InputMessenger::OnNewMessages (691,486 samples, 1.02%)</title><rect x="551.6" y="197" width="12.0" height="15.0" fill="rgb(231,169,16)" rx="2" ry="2" />
+<text  x="554.56" y="207.5" ></text>
+</g>
+<g >
+<title>je_pa_alloc (166,464 samples, 0.25%)</title><rect x="595.9" y="245" width="2.9" height="15.0" fill="rgb(220,124,29)" rx="2" ry="2" />
+<text  x="598.86" y="255.5" ></text>
+</g>
+<g >
+<title>[unknown] (77,163 samples, 0.11%)</title><rect x="492.9" y="101" width="1.3" height="15.0" fill="rgb(208,79,0)" rx="2" ry="2" />
+<text  x="495.86" y="111.5" ></text>
+</g>
+<g >
+<title>brpc::PeriodicNamingService::RunNamingService (104,661 samples, 0.15%)</title><rect x="504.5" y="181" width="1.8" height="15.0" fill="rgb(237,117,2)" rx="2" ry="2" />
+<text  x="507.46" y="191.5" ></text>
+</g>
+<g >
+<title>Eigen::internal::dnnl_gemm_kernel&lt;float, long, Eigen::internal::blas_data_mapper&lt;float, long, 0, 0, 1&gt;, false, false&gt;::operator (67,265 samples, 0.10%)</title><rect x="379.2" y="165" width="1.2" height="15.0" fill="rgb(236,195,40)" rx="2" ry="2" />
+<text  x="382.20" y="175.5" ></text>
+</g>
+<g >
+<title>CGraph::UThreadBase::loopProcess (1,108,598 samples, 1.64%)</title><rect x="479.1" y="197" width="19.3" height="15.0" fill="rgb(223,73,34)" rx="2" ry="2" />
+<text  x="482.05" y="207.5" ></text>
+</g>
+<g >
+<title>Eigen::ThreadPoolTempl&lt;tensorflow::thread::EigenEnvironment&gt;::ScheduleWithHint (199,328 samples, 0.30%)</title><rect x="298.9" y="117" width="3.5" height="15.0" fill="rgb(223,175,41)" rx="2" ry="2" />
+<text  x="301.91" y="127.5" ></text>
+</g>
+<g >
+<title>_dl_update_slotinfo (93,683 samples, 0.14%)</title><rect x="520.3" y="101" width="1.6" height="15.0" fill="rgb(240,137,1)" rx="2" ry="2" />
+<text  x="523.27" y="111.5" ></text>
+</g>
+<g >
+<title>bvar::detail::SamplerCollector::run (31,833,964 samples, 47.13%)</title><rect x="630.6" y="213" width="556.1" height="15.0" fill="rgb(214,100,16)" rx="2" ry="2" />
+<text  x="633.57" y="223.5" >bvar::detail::SamplerCollector::run</text>
+</g>
+<g >
+<title>predict::infer::InferForwardCachedClientT&lt;lambda::framework::ProtostuffHelperV2&gt;::startBackgroud (605,739 samples, 0.90%)</title><rect x="210.3" y="229" width="10.6" height="15.0" fill="rgb(223,2,47)" rx="2" ry="2" />
+<text  x="213.35" y="239.5" ></text>
+</g>
+<g >
+<title>je_eset_remove (99,051 samples, 0.15%)</title><rect x="1188.3" y="245" width="1.7" height="15.0" fill="rgb(230,176,14)" rx="2" ry="2" />
+<text  x="1191.26" y="255.5" ></text>
+</g>
+<g >
+<title>[unknown] (95,446 samples, 0.14%)</title><rect x="101.3" y="213" width="1.7" height="15.0" fill="rgb(214,211,22)" rx="2" ry="2" />
+<text  x="104.35" y="223.5" ></text>
+</g>
+<g >
+<title>ns_name_pack (97,920 samples, 0.14%)</title><rect x="117.3" y="229" width="1.7" height="15.0" fill="rgb(234,50,3)" rx="2" ry="2" />
+<text  x="120.31" y="239.5" ></text>
+</g>
+<g >
+<title>Eigen::TensorBase&lt;Eigen::TensorMap&lt;Eigen::Tensor&lt;float, 3, 1, long&gt;, 16, Eigen::MakePointer&gt;, 1&gt;::setZero (90,496 samples, 0.13%)</title><rect x="572.2" y="149" width="1.6" height="15.0" fill="rgb(234,178,54)" rx="2" ry="2" />
+<text  x="575.24" y="159.5" ></text>
+</g>
+<g >
+<title>bthread::get_stack (82,122 samples, 0.12%)</title><rect x="503.0" y="133" width="1.5" height="15.0" fill="rgb(225,124,41)" rx="2" ry="2" />
+<text  x="506.02" y="143.5" ></text>
+</g>
+<g >
+<title>bthread_id_unlock_and_destroy (467,058 samples, 0.69%)</title><rect x="551.6" y="117" width="8.1" height="15.0" fill="rgb(238,2,16)" rx="2" ry="2" />
+<text  x="554.56" y="127.5" ></text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Relu&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::EvalParallelContext&lt;Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Relu&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::NoCallback, true, true, false, 0&gt;::enqueue_packing_helper (1,157,922 samples, 1.71%)</title><rect x="359.0" y="197" width="20.2" height="15.0" fill="rgb(211,17,33)" rx="2" ry="2" />
+<text  x="361.97" y="207.5" ></text>
+</g>
+<g >
+<title>bthread::TaskGroup::ready_to_run_remote (240,529 samples, 0.36%)</title><rect x="626.4" y="165" width="4.2" height="15.0" fill="rgb(233,149,33)" rx="2" ry="2" />
+<text  x="629.36" y="175.5" ></text>
+</g>
+<g >
+<title>_IO_vsprintf (120,088 samples, 0.18%)</title><rect x="97.9" y="229" width="2.1" height="15.0" fill="rgb(254,188,35)" rx="2" ry="2" />
+<text  x="100.89" y="239.5" ></text>
+</g>
+<g >
+<title>__random_r (71,276 samples, 0.11%)</title><rect x="159.1" y="213" width="1.3" height="15.0" fill="rgb(241,212,27)" rx="2" ry="2" />
+<text  x="162.14" y="223.5" ></text>
+</g>
+<g >
+<title>std::_Function_handler&lt;void  (209,401 samples, 0.31%)</title><rect x="465.2" y="85" width="3.6" height="15.0" fill="rgb(234,6,15)" rx="2" ry="2" />
+<text  x="468.17" y="95.5" ></text>
+</g>
+<g >
+<title>[[vdso]] (31,777,306 samples, 47.05%)</title><rect x="630.6" y="181" width="555.1" height="15.0" fill="rgb(217,0,52)" rx="2" ry="2" />
+<text  x="633.57" y="191.5" >[[vdso]]</text>
+</g>
+<g >
+<title>std::_Function_handler&lt;void  (88,066 samples, 0.13%)</title><rect x="499.5" y="213" width="1.5" height="15.0" fill="rgb(243,82,41)" rx="2" ry="2" />
+<text  x="502.46" y="223.5" ></text>
+</g>
+<g >
+<title>__GI___libc_nanosleep (173,448 samples, 0.26%)</title><rect x="100.0" y="229" width="3.0" height="15.0" fill="rgb(241,42,6)" rx="2" ry="2" />
+<text  x="102.98" y="239.5" ></text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::EvalParallelContext&lt;Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::NoCallback, true, true, false, 0&gt;::signal_kernel (112,542 samples, 0.17%)</title><rect x="356.6" y="181" width="1.9" height="15.0" fill="rgb(241,158,35)" rx="2" ry="2" />
+<text  x="359.55" y="191.5" ></text>
+</g>
+<g >
+<title>Eigen::ThreadPoolDevice::parallelFor (88,269 samples, 0.13%)</title><rect x="458.7" y="117" width="1.5" height="15.0" fill="rgb(254,186,28)" rx="2" ry="2" />
+<text  x="461.67" y="127.5" ></text>
+</g>
+<g >
+<title>std::_Function_handler&lt;void  (4,095,284 samples, 6.06%)</title><rect x="387.1" y="181" width="71.6" height="15.0" fill="rgb(225,174,23)" rx="2" ry="2" />
+<text  x="390.12" y="191.5" >std::_Fu..</text>
+</g>
+<g >
+<title>[unknown] (6,462,277 samples, 9.57%)</title><rect x="10.0" y="245" width="112.9" height="15.0" fill="rgb(246,16,46)" rx="2" ry="2" />
+<text  x="13.00" y="255.5" >[unknown]</text>
+</g>
+<g >
+<title>std::string::_Rep::_M_grab (183,137 samples, 0.27%)</title><rect x="531.9" y="133" width="3.2" height="15.0" fill="rgb(211,40,8)" rx="2" ry="2" />
+<text  x="534.86" y="143.5" ></text>
+</g>
+<g >
+<title>bthread::TaskGroup::run_main_task (1,396,048 samples, 2.07%)</title><rect x="600.4" y="213" width="24.4" height="15.0" fill="rgb(221,100,36)" rx="2" ry="2" />
+<text  x="603.44" y="223.5" >b..</text>
+</g>
+<g >
+<title>brpc::Socket::CheckConnectedAndKeepWrite (58,493 samples, 0.09%)</title><rect x="501.6" y="149" width="1.0" height="15.0" fill="rgb(223,12,45)" rx="2" ry="2" />
+<text  x="504.60" y="159.5" ></text>
+</g>
+<g >
+<title>[unknown] (77,163 samples, 0.11%)</title><rect x="492.9" y="85" width="1.3" height="15.0" fill="rgb(236,215,54)" rx="2" ry="2" />
+<text  x="495.86" y="95.5" ></text>
+</g>
+<g >
+<title>std::chrono::_V2::system_clock::now (124,120 samples, 0.18%)</title><rect x="494.2" y="165" width="2.2" height="15.0" fill="rgb(219,229,23)" rx="2" ry="2" />
+<text  x="497.20" y="175.5" ></text>
+</g>
+<g >
+<title>[libpthread-2.17.so] (53,494 samples, 0.08%)</title><rect x="128.6" y="213" width="0.9" height="15.0" fill="rgb(224,123,2)" rx="2" ry="2" />
+<text  x="131.60" y="223.5" ></text>
+</g>
+<g >
+<title>brpc::Controller::EndRPC (467,058 samples, 0.69%)</title><rect x="551.6" y="133" width="8.1" height="15.0" fill="rgb(240,165,31)" rx="2" ry="2" />
+<text  x="554.56" y="143.5" ></text>
+</g>
+<g >
+<title>__tls_get_addr_slow (88,432 samples, 0.13%)</title><rect x="189.8" y="181" width="1.6" height="15.0" fill="rgb(243,104,37)" rx="2" ry="2" />
+<text  x="192.84" y="191.5" ></text>
+</g>
+<g >
+<title>[libpthread-2.17.so] (695,979 samples, 1.03%)</title><rect x="147.0" y="229" width="12.1" height="15.0" fill="rgb(254,213,19)" rx="2" ry="2" />
+<text  x="149.98" y="239.5" ></text>
+</g>
+<g >
+<title>brpc::Controller::Call::~Call@plt (67,722 samples, 0.10%)</title><rect x="581.0" y="117" width="1.2" height="15.0" fill="rgb(244,47,28)" rx="2" ry="2" />
+<text  x="583.98" y="127.5" ></text>
+</g>
+<g >
+<title>brpc::ProcessInputMessage (1,116,270 samples, 1.65%)</title><rect x="528.7" y="213" width="19.5" height="15.0" fill="rgb(205,71,12)" rx="2" ry="2" />
+<text  x="531.66" y="223.5" ></text>
+</g>
+<g >
+<title>dnnl::impl::cpu::x64::gemm_driver&lt;float, float, float&gt; (67,265 samples, 0.10%)</title><rect x="379.2" y="117" width="1.2" height="15.0" fill="rgb(251,32,19)" rx="2" ry="2" />
+<text  x="382.20" y="127.5" ></text>
+</g>
+<g >
+<title>Eigen::ThreadPoolTempl&lt;tensorflow::thread::EigenEnvironment&gt;::ScheduleWithHint (388,187 samples, 0.57%)</title><rect x="326.4" y="133" width="6.8" height="15.0" fill="rgb(252,48,13)" rx="2" ry="2" />
+<text  x="329.41" y="143.5" ></text>
+</g>
+<g >
+<title>__strlen_sse42 (64,169 samples, 0.10%)</title><rect x="573.8" y="149" width="1.1" height="15.0" fill="rgb(219,149,1)" rx="2" ry="2" />
+<text  x="576.82" y="159.5" ></text>
+</g>
+<g >
+<title>brpc::Socket::StartInputEvent (105,103 samples, 0.16%)</title><rect x="502.6" y="181" width="1.9" height="15.0" fill="rgb(217,16,11)" rx="2" ry="2" />
+<text  x="505.62" y="191.5" ></text>
+</g>
+<g >
+<title>tensorflow::BinaryOp&lt;Eigen::ThreadPoolDevice, tensorflow::functor::mul&lt;float&gt; &gt;::Compute (581,577 samples, 0.86%)</title><rect x="458.7" y="149" width="10.1" height="15.0" fill="rgb(218,184,52)" rx="2" ry="2" />
+<text  x="461.67" y="159.5" ></text>
+</g>
+<g >
+<title>CGraph::UThreadPrimary::fatWait (247,939 samples, 0.37%)</title><rect x="480.9" y="165" width="4.3" height="15.0" fill="rgb(233,158,50)" rx="2" ry="2" />
+<text  x="483.91" y="175.5" ></text>
+</g>
+<g >
+<title>pthread_self (159,778 samples, 0.24%)</title><rect x="525.9" y="85" width="2.8" height="15.0" fill="rgb(234,195,42)" rx="2" ry="2" />
+<text  x="528.87" y="95.5" ></text>
+</g>
+<g >
+<title>bthread::TaskControl::steal_task (736,380 samples, 1.09%)</title><rect x="608.1" y="181" width="12.8" height="15.0" fill="rgb(236,224,19)" rx="2" ry="2" />
+<text  x="611.06" y="191.5" ></text>
+</g>
+<g >
+<title>[unknown] (47,613 samples, 0.07%)</title><rect x="102.2" y="165" width="0.8" height="15.0" fill="rgb(215,84,28)" rx="2" ry="2" />
+<text  x="105.18" y="175.5" ></text>
+</g>
+<g >
+<title>pthread_mutex_lock (363,249 samples, 0.54%)</title><rect x="202.6" y="213" width="6.3" height="15.0" fill="rgb(217,30,31)" rx="2" ry="2" />
+<text  x="205.56" y="223.5" ></text>
+</g>
+<g >
+<title>__pthread_enable_asynccancel (46,250 samples, 0.07%)</title><rect x="485.2" y="165" width="0.9" height="15.0" fill="rgb(237,194,53)" rx="2" ry="2" />
+<text  x="488.25" y="175.5" ></text>
+</g>
+<g >
+<title>je_edata_heap_first (160,546 samples, 0.24%)</title><rect x="593.1" y="245" width="2.8" height="15.0" fill="rgb(211,52,50)" rx="2" ry="2" />
+<text  x="596.06" y="255.5" ></text>
+</g>
+<g >
+<title>bthread_id_unlock_and_destroy (114,769 samples, 0.17%)</title><rect x="559.7" y="117" width="2.0" height="15.0" fill="rgb(211,107,47)" rx="2" ry="2" />
+<text  x="562.72" y="127.5" ></text>
+</g>
+<g >
+<title>brpc::RedisRequest::descriptor (87,144 samples, 0.13%)</title><rect x="186.4" y="149" width="1.5" height="15.0" fill="rgb(225,192,52)" rx="2" ry="2" />
+<text  x="189.40" y="159.5" ></text>
+</g>
+<g >
+<title>pthread_cond_signal@@GLIBC_2.3.2 (125,294 samples, 0.19%)</title><rect x="353.9" y="165" width="2.2" height="15.0" fill="rgb(231,109,38)" rx="2" ry="2" />
+<text  x="356.91" y="175.5" ></text>
+</g>
+<g >
+<title>bvar::Reducer&lt;long, bvar::detail::AddTo&lt;long&gt;, bvar::detail::MinusFrom&lt;long&gt; &gt;::operator&lt;&lt; (47,610 samples, 0.07%)</title><rect x="550.7" y="197" width="0.9" height="15.0" fill="rgb(254,182,15)" rx="2" ry="2" />
+<text  x="553.73" y="207.5" ></text>
+</g>
+<g >
+<title>brpc::Controller::RecordRPCMetrics (183,137 samples, 0.27%)</title><rect x="531.9" y="149" width="3.2" height="15.0" fill="rgb(252,183,8)" rx="2" ry="2" />
+<text  x="534.86" y="159.5" ></text>
+</g>
+<g >
+<title>[[vdso]] (110,621 samples, 0.16%)</title><rect x="528.7" y="133" width="1.9" height="15.0" fill="rgb(233,1,0)" rx="2" ry="2" />
+<text  x="531.66" y="143.5" ></text>
+</g>
+<g >
+<title>[unknown] (107,101 samples, 0.16%)</title><rect x="164.3" y="213" width="1.8" height="15.0" fill="rgb(234,118,36)" rx="2" ry="2" />
+<text  x="167.27" y="223.5" ></text>
+</g>
+<g >
+<title>je_free_default (215,597 samples, 0.32%)</title><rect x="109.3" y="229" width="3.8" height="15.0" fill="rgb(236,207,25)" rx="2" ry="2" />
+<text  x="112.32" y="239.5" ></text>
+</g>
+<g >
+<title>brpc::RedisCommandFormatV (50,007 samples, 0.07%)</title><rect x="191.4" y="181" width="0.9" height="15.0" fill="rgb(224,140,5)" rx="2" ry="2" />
+<text  x="194.39" y="191.5" ></text>
+</g>
+<g >
+<title>tensorflow::Shard (82,351 samples, 0.12%)</title><rect x="468.8" y="117" width="1.5" height="15.0" fill="rgb(243,66,39)" rx="2" ry="2" />
+<text  x="471.83" y="127.5" ></text>
+</g>
+<g >
+<title>[unknown] (88,066 samples, 0.13%)</title><rect x="499.5" y="149" width="1.5" height="15.0" fill="rgb(230,56,14)" rx="2" ry="2" />
+<text  x="502.46" y="159.5" ></text>
+</g>
+<g >
+<title>bthread::TaskGroup::task_runner (5,235,326 samples, 7.75%)</title><rect x="501.6" y="229" width="91.5" height="15.0" fill="rgb(211,59,13)" rx="2" ry="2" />
+<text  x="504.60" y="239.5" >bthread::T..</text>
+</g>
+<g >
+<title>butil::IOPortal::pappend_from_file_descriptor (109,659 samples, 0.16%)</title><rect x="561.7" y="165" width="1.9" height="15.0" fill="rgb(237,40,33)" rx="2" ry="2" />
+<text  x="564.73" y="175.5" ></text>
+</g>
+<g >
+<title>bthread::TaskGroup::start_background&lt;false&gt; (58,493 samples, 0.09%)</title><rect x="501.6" y="101" width="1.0" height="15.0" fill="rgb(226,67,17)" rx="2" ry="2" />
+<text  x="504.60" y="111.5" ></text>
+</g>
+<g >
+<title>syscall (79,382 samples, 0.12%)</title><rect x="623.4" y="197" width="1.4" height="15.0" fill="rgb(243,206,31)" rx="2" ry="2" />
+<text  x="626.44" y="207.5" ></text>
+</g>
+<g >
+<title>Eigen::ThreadPoolDevice::parallelFor (142,045 samples, 0.21%)</title><rect x="460.2" y="117" width="2.5" height="15.0" fill="rgb(230,33,23)" rx="2" ry="2" />
+<text  x="463.21" y="127.5" ></text>
+</g>
+<g >
+<title>[unknown] (79,381 samples, 0.12%)</title><rect x="623.4" y="181" width="1.4" height="15.0" fill="rgb(254,183,1)" rx="2" ry="2" />
+<text  x="626.44" y="191.5" ></text>
+</g>
+<g >
+<title>brpc::Channel::CallMethod (196,825 samples, 0.29%)</title><rect x="186.4" y="197" width="3.4" height="15.0" fill="rgb(247,66,17)" rx="2" ry="2" />
+<text  x="189.40" y="207.5" ></text>
+</g>
+<g >
+<title>[unknown] (77,163 samples, 0.11%)</title><rect x="492.9" y="69" width="1.3" height="15.0" fill="rgb(224,79,49)" rx="2" ry="2" />
+<text  x="495.86" y="79.5" ></text>
+</g>
+<g >
+<title>[unknown] (114,783 samples, 0.17%)</title><rect x="496.4" y="133" width="2.0" height="15.0" fill="rgb(205,53,31)" rx="2" ry="2" />
+<text  x="499.42" y="143.5" ></text>
+</g>
+<g >
+<title>Eigen::ThreadPoolTempl&lt;tensorflow::thread::EigenEnvironment&gt;::ScheduleWithHint (292,068 samples, 0.43%)</title><rect x="348.8" y="165" width="5.1" height="15.0" fill="rgb(231,158,33)" rx="2" ry="2" />
+<text  x="351.81" y="175.5" ></text>
+</g>
+<g >
+<title>[unknown] (47,613 samples, 0.07%)</title><rect x="102.2" y="149" width="0.8" height="15.0" fill="rgb(212,25,39)" rx="2" ry="2" />
+<text  x="105.18" y="159.5" ></text>
+</g>
+<g >
+<title>brpc::Socket::CreatedByConnect (87,869 samples, 0.13%)</title><rect x="536.2" y="181" width="1.5" height="15.0" fill="rgb(246,31,53)" rx="2" ry="2" />
+<text  x="539.19" y="191.5" ></text>
+</g>
+<g >
+<title>bthread::TaskGroup::_add_sleep_event (386,449 samples, 0.57%)</title><rect x="521.9" y="101" width="6.8" height="15.0" fill="rgb(241,132,0)" rx="2" ry="2" />
+<text  x="524.91" y="111.5" ></text>
+</g>
+<g >
+<title>dnnl::impl::cpu::x64::gemm_info_t&lt;float, float, float&gt;::gemm_info_t (42,329 samples, 0.06%)</title><rect x="379.6" y="101" width="0.8" height="15.0" fill="rgb(239,153,16)" rx="2" ry="2" />
+<text  x="382.64" y="111.5" ></text>
+</g>
+<g >
+<title>__tls_get_addr (252,906 samples, 0.37%)</title><rect x="131.6" y="213" width="4.4" height="15.0" fill="rgb(237,35,21)" rx="2" ry="2" />
+<text  x="134.63" y="223.5" ></text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::EvalParallelContext&lt;Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::NoCallback, true, true, false, 0&gt;::pack_rhs (205,304 samples, 0.30%)</title><rect x="471.8" y="53" width="3.6" height="15.0" fill="rgb(245,40,2)" rx="2" ry="2" />
+<text  x="474.79" y="63.5" ></text>
+</g>
+<g >
+<title>brpc::EventDispatcher::RunThis (163,904 samples, 0.24%)</title><rect x="501.6" y="213" width="2.9" height="15.0" fill="rgb(205,87,0)" rx="2" ry="2" />
+<text  x="504.60" y="223.5" ></text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::EvalParallelContext&lt;Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::NoCallback, true, true, false, 0&gt;::enqueue_packing_helper (1,419,911 samples, 2.10%)</title><rect x="298.9" y="181" width="24.8" height="15.0" fill="rgb(217,61,22)" rx="2" ry="2" />
+<text  x="301.91" y="191.5" >E..</text>
+</g>
+<g >
+<title>pthread_mutex_unlock (82,736 samples, 0.12%)</title><rect x="208.9" y="213" width="1.4" height="15.0" fill="rgb(235,199,30)" rx="2" ry="2" />
+<text  x="211.90" y="223.5" ></text>
+</g>
+<g >
+<title>brpc::CircuitBreaker::OnCallEnd (72,603 samples, 0.11%)</title><rect x="530.6" y="117" width="1.3" height="15.0" fill="rgb(213,68,41)" rx="2" ry="2" />
+<text  x="533.59" y="127.5" ></text>
+</g>
+<g >
+<title>__pthread_enable_asynccancel (108,850 samples, 0.16%)</title><rect x="166.9" y="229" width="1.9" height="15.0" fill="rgb(223,213,48)" rx="2" ry="2" />
+<text  x="169.91" y="239.5" ></text>
+</g>
+<g >
+<title>tensorflow::serving::AspiredVersionsManager::FlushServables (88,066 samples, 0.13%)</title><rect x="499.5" y="197" width="1.5" height="15.0" fill="rgb(216,82,45)" rx="2" ry="2" />
+<text  x="502.46" y="207.5" ></text>
+</g>
+<g >
+<title>lookup::tmpl::LookupOP&lt;true, false, false, false, false, false&gt;::calc (982,259 samples, 1.45%)</title><rect x="569.5" y="165" width="17.2" height="15.0" fill="rgb(214,111,54)" rx="2" ry="2" />
+<text  x="572.51" y="175.5" ></text>
+</g>
+<g >
+<title>pthread_rwlock_rdlock (56,270 samples, 0.08%)</title><rect x="221.0" y="229" width="0.9" height="15.0" fill="rgb(221,138,16)" rx="2" ry="2" />
+<text  x="223.96" y="239.5" ></text>
+</g>
+<g >
+<title>bthread::TaskGroup::sched (1,178,852 samples, 1.75%)</title><rect x="508.1" y="133" width="20.6" height="15.0" fill="rgb(209,218,46)" rx="2" ry="2" />
+<text  x="511.07" y="143.5" ></text>
+</g>
+<g >
+<title>__memcpy_ssse3 (218,453 samples, 0.32%)</title><rect x="577.2" y="69" width="3.8" height="15.0" fill="rgb(250,204,26)" rx="2" ry="2" />
+<text  x="580.17" y="79.5" ></text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Relu&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::EvalParallelContext&lt;Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Relu&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::NoCallback, true, true, false, 0&gt;::signal_switch (114,579 samples, 0.17%)</title><rect x="377.2" y="181" width="2.0" height="15.0" fill="rgb(226,14,19)" rx="2" ry="2" />
+<text  x="380.20" y="191.5" ></text>
+</g>
+<g >
+<title>pthread_mutex_lock (100,462 samples, 0.15%)</title><rect x="391.6" y="165" width="1.8" height="15.0" fill="rgb(211,22,46)" rx="2" ry="2" />
+<text  x="394.61" y="175.5" ></text>
+</g>
+<g >
+<title>__memcpy_ssse3 (82,351 samples, 0.12%)</title><rect x="468.8" y="69" width="1.5" height="15.0" fill="rgb(213,167,30)" rx="2" ry="2" />
+<text  x="471.83" y="79.5" ></text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::evalProductImpl&lt;Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::NoCallback, 0&gt; (205,304 samples, 0.30%)</title><rect x="471.8" y="117" width="3.6" height="15.0" fill="rgb(230,223,17)" rx="2" ry="2" />
+<text  x="474.79" y="127.5" ></text>
+</g>
+<g >
+<title>std::_Function_handler&lt;void  (88,269 samples, 0.13%)</title><rect x="458.7" y="85" width="1.5" height="15.0" fill="rgb(236,136,43)" rx="2" ry="2" />
+<text  x="461.67" y="95.5" ></text>
+</g>
+<g >
+<title>brpc::Socket::AfterAppConnected (58,493 samples, 0.09%)</title><rect x="501.6" y="133" width="1.0" height="15.0" fill="rgb(212,52,16)" rx="2" ry="2" />
+<text  x="504.60" y="143.5" ></text>
+</g>
+<g >
+<title>dnnl_sgemm (67,265 samples, 0.10%)</title><rect x="379.2" y="149" width="1.2" height="15.0" fill="rgb(240,40,5)" rx="2" ry="2" />
+<text  x="382.20" y="159.5" ></text>
+</g>
+<g >
+<title>dnnl::impl::cpu::x64::gemm_driver&lt;float, float, float&gt; (25,981 samples, 0.04%)</title><rect x="358.5" y="117" width="0.5" height="15.0" fill="rgb(236,115,45)" rx="2" ry="2" />
+<text  x="361.52" y="127.5" ></text>
+</g>
+<g >
+<title>dnnl::impl::cpu::extended_sgemm (67,265 samples, 0.10%)</title><rect x="379.2" y="133" width="1.2" height="15.0" fill="rgb(225,218,17)" rx="2" ry="2" />
+<text  x="382.20" y="143.5" ></text>
+</g>
+<g >
+<title>[perf-583.map] (5,030,572 samples, 7.45%)</title><rect x="10.0" y="229" width="87.9" height="15.0" fill="rgb(252,85,53)" rx="2" ry="2" />
+<text  x="13.00" y="239.5" >[perf-583...</text>
+</g>
+<g >
+<title>Eigen::ThreadPoolTempl&lt;tensorflow::thread::EigenEnvironment&gt;::Schedule (417,362 samples, 0.62%)</title><rect x="348.8" y="181" width="7.3" height="15.0" fill="rgb(250,202,23)" rx="2" ry="2" />
+<text  x="351.81" y="191.5" ></text>
+</g>
+<g >
+<title>FeatureExtractOP::calc (166,504 samples, 0.25%)</title><rect x="439.2" y="149" width="2.9" height="15.0" fill="rgb(208,164,32)" rx="2" ry="2" />
+<text  x="442.21" y="159.5" ></text>
+</g>
+<g >
+<title>std::_Function_handler&lt;void  (5,178,742 samples, 7.67%)</title><rect x="387.1" y="197" width="90.5" height="15.0" fill="rgb(247,107,17)" rx="2" ry="2" />
+<text  x="390.12" y="207.5" >std::_Func..</text>
+</g>
+<g >
+<title>Eigen::internal::TensorExecutor&lt;Eigen::TensorAssignOp&lt;Eigen::TensorMap&lt;Eigen::Tensor&lt;float, 1, 1, long&gt;, 16, Eigen::MakePointer&gt;, Eigen::TensorCwiseBinaryOp&lt;Eigen::internal::scalar_product_op&lt;float, float&gt;, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 1, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 1, 1, long&gt;, 16, Eigen::MakePointer&gt; const&gt; const&gt; const, Eigen::ThreadPoolDevice, true,  (88,269 samples, 0.13%)</title><rect x="458.7" y="133" width="1.5" height="15.0" fill="rgb(244,111,18)" rx="2" ry="2" />
+<text  x="461.67" y="143.5" ></text>
+</g>
+<g >
+<title>usleep (47,848 samples, 0.07%)</title><rect x="122.1" y="229" width="0.8" height="15.0" fill="rgb(208,122,47)" rx="2" ry="2" />
+<text  x="125.06" y="239.5" ></text>
+</g>
+<g >
+<title>pthread_mutex_trylock (94,963 samples, 0.14%)</title><rect x="598.8" y="245" width="1.6" height="15.0" fill="rgb(240,81,10)" rx="2" ry="2" />
+<text  x="601.78" y="255.5" ></text>
+</g>
+<g >
+<title>brpc::Socket::KeepWriteIfConnected (58,493 samples, 0.09%)</title><rect x="501.6" y="165" width="1.0" height="15.0" fill="rgb(251,40,46)" rx="2" ry="2" />
+<text  x="504.60" y="175.5" ></text>
+</g>
+<g >
+<title>finish (5,235,326 samples, 7.75%)</title><rect x="501.6" y="245" width="91.5" height="15.0" fill="rgb(212,111,30)" rx="2" ry="2" />
+<text  x="504.60" y="255.5" >finish</text>
+</g>
+<g >
+<title>std::thread::_State_impl&lt;std::thread::_Invoker&lt;std::tuple&lt;CGraph::internal::CSTATUS  (1,166,984 samples, 1.73%)</title><rect x="479.1" y="229" width="20.3" height="15.0" fill="rgb(222,28,4)" rx="2" ry="2" />
+<text  x="482.05" y="239.5" ></text>
+</g>
+<g >
+<title>bthread::TaskGroup::start_foreground (82,122 samples, 0.12%)</title><rect x="503.0" y="149" width="1.5" height="15.0" fill="rgb(233,222,15)" rx="2" ry="2" />
+<text  x="506.02" y="159.5" ></text>
+</g>
+<g >
+<title>je_large_palloc (46,763 samples, 0.07%)</title><rect x="113.1" y="229" width="0.8" height="15.0" fill="rgb(212,224,20)" rx="2" ry="2" />
+<text  x="116.08" y="239.5" ></text>
+</g>
+<g >
+<title>brpc::Socket::KeepWrite (47,610 samples, 0.07%)</title><rect x="550.7" y="213" width="0.9" height="15.0" fill="rgb(245,55,18)" rx="2" ry="2" />
+<text  x="553.73" y="223.5" ></text>
+</g>
+<g >
+<title>bthread::TaskGroup::wait_task (738,151 samples, 1.09%)</title><rect x="608.0" y="197" width="12.9" height="15.0" fill="rgb(230,62,5)" rx="2" ry="2" />
+<text  x="611.03" y="207.5" ></text>
+</g>
+<g >
+<title>bthread::TimerThread::run (328,129 samples, 0.49%)</title><rect x="624.8" y="213" width="5.8" height="15.0" fill="rgb(236,143,10)" rx="2" ry="2" />
+<text  x="627.83" y="223.5" ></text>
+</g>
+<g >
+<title>bvar::detail::Percentile::operator&lt;&lt; (64,359 samples, 0.10%)</title><rect x="535.1" y="117" width="1.1" height="15.0" fill="rgb(219,30,39)" rx="2" ry="2" />
+<text  x="538.06" y="127.5" ></text>
+</g>
+<g >
+<title>dnnl_sgemm (154,116 samples, 0.23%)</title><rect x="323.7" y="101" width="2.7" height="15.0" fill="rgb(254,6,23)" rx="2" ry="2" />
+<text  x="326.72" y="111.5" ></text>
+</g>
+<g >
+<title>[unknown] (88,066 samples, 0.13%)</title><rect x="499.5" y="133" width="1.5" height="15.0" fill="rgb(234,187,33)" rx="2" ry="2" />
+<text  x="502.46" y="143.5" ></text>
+</g>
+<g >
+<title>qiao::thrift::PullRequest::~PullRequest (88,458 samples, 0.13%)</title><rect x="585.1" y="117" width="1.6" height="15.0" fill="rgb(242,38,28)" rx="2" ry="2" />
+<text  x="588.12" y="127.5" ></text>
+</g>
+<g >
+<title>brpc::policy::ProcessNettyThriftResponse (1,116,270 samples, 1.65%)</title><rect x="528.7" y="197" width="19.5" height="15.0" fill="rgb(237,71,42)" rx="2" ry="2" />
+<text  x="531.66" y="207.5" ></text>
+</g>
+<g >
+<title>qiao::Client::send_and_recv (671,276 samples, 0.99%)</title><rect x="574.9" y="149" width="11.8" height="15.0" fill="rgb(238,228,6)" rx="2" ry="2" />
+<text  x="577.94" y="159.5" ></text>
+</g>
+<g >
+<title>std::chrono::_V2::system_clock::now (137,423 samples, 0.20%)</title><rect x="136.0" y="213" width="2.4" height="15.0" fill="rgb(223,6,11)" rx="2" ry="2" />
+<text  x="139.05" y="223.5" ></text>
+</g>
+<g >
+<title>brpc::policy::DynamicTimeoutPolicy::OnRpcEnd (64,359 samples, 0.10%)</title><rect x="535.1" y="149" width="1.1" height="15.0" fill="rgb(253,203,43)" rx="2" ry="2" />
+<text  x="538.06" y="159.5" ></text>
+</g>
+<g >
+<title>bvar::Reducer&lt;int, bvar::detail::AddTo&lt;int&gt;, bvar::detail::MinusFrom&lt;int&gt; &gt;::operator&lt;&lt; (109,681 samples, 0.16%)</title><rect x="187.9" y="181" width="1.9" height="15.0" fill="rgb(244,34,37)" rx="2" ry="2" />
+<text  x="190.93" y="191.5" ></text>
+</g>
+<g >
+<title>jemalloc_bg_thd (188,034 samples, 0.28%)</title><rect x="1186.7" y="261" width="3.3" height="15.0" fill="rgb(253,214,45)" rx="2" ry="2" />
+<text  x="1189.72" y="271.5" ></text>
+</g>
+<g >
+<title>Eigen::ThreadPoolTempl&lt;tensorflow::thread::EigenEnvironment&gt;::WorkerLoop (13,859,222 samples, 20.52%)</title><rect x="235.5" y="213" width="242.1" height="15.0" fill="rgb(235,227,12)" rx="2" ry="2" />
+<text  x="238.47" y="223.5" >Eigen::ThreadPoolTempl&lt;tensorflo..</text>
+</g>
+<g >
+<title>pthread_mutex_lock (146,297 samples, 0.22%)</title><rect x="626.4" y="149" width="2.5" height="15.0" fill="rgb(249,57,40)" rx="2" ry="2" />
+<text  x="629.36" y="159.5" ></text>
+</g>
+<g >
+<title>[unknown] (114,783 samples, 0.17%)</title><rect x="496.4" y="117" width="2.0" height="15.0" fill="rgb(212,25,35)" rx="2" ry="2" />
+<text  x="499.42" y="127.5" ></text>
+</g>
+<g >
+<title>brpc::Socket::ProcessEvent (691,486 samples, 1.02%)</title><rect x="551.6" y="213" width="12.0" height="15.0" fill="rgb(246,87,54)" rx="2" ry="2" />
+<text  x="554.56" y="223.5" ></text>
+</g>
+<g >
+<title>Eigen::internal::dnnl_gemm_kernel&lt;float, long, Eigen::internal::blas_data_mapper&lt;float, long, 0, 0, 1&gt;, false, false&gt;::operator (25,981 samples, 0.04%)</title><rect x="358.5" y="165" width="0.5" height="15.0" fill="rgb(210,204,41)" rx="2" ry="2" />
+<text  x="361.52" y="175.5" ></text>
+</g>
+<g >
+<title>brpc::CircuitBreaker::EmaErrorRecorder::UpdateLatency (72,603 samples, 0.11%)</title><rect x="530.6" y="101" width="1.3" height="15.0" fill="rgb(254,215,47)" rx="2" ry="2" />
+<text  x="533.59" y="111.5" ></text>
+</g>
+<g >
+<title>brpc::policy::ReadThriftStruct (215,763 samples, 0.32%)</title><rect x="542.9" y="181" width="3.8" height="15.0" fill="rgb(239,39,34)" rx="2" ry="2" />
+<text  x="545.93" y="191.5" ></text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::EvalParallelContext&lt;Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::NoCallback, true, true, false, 0&gt;::signal_switch (222,984 samples, 0.33%)</title><rect x="333.2" y="165" width="3.9" height="15.0" fill="rgb(224,221,38)" rx="2" ry="2" />
+<text  x="336.19" y="175.5" ></text>
+</g>
+<g >
+<title>dnnl_sgemm (25,981 samples, 0.04%)</title><rect x="358.5" y="149" width="0.5" height="15.0" fill="rgb(215,145,7)" rx="2" ry="2" />
+<text  x="361.52" y="159.5" ></text>
+</g>
+<g >
+<title>[unknown] (125,294 samples, 0.19%)</title><rect x="353.9" y="133" width="2.2" height="15.0" fill="rgb(216,15,38)" rx="2" ry="2" />
+<text  x="356.91" y="143.5" ></text>
+</g>
+<g >
+<title>je_edata_avail_remove (104,102 samples, 0.15%)</title><rect x="104.7" y="229" width="1.8" height="15.0" fill="rgb(228,216,8)" rx="2" ry="2" />
+<text  x="107.65" y="239.5" ></text>
+</g>
+<g >
+<title>Eigen::internal::dnnl_gemm_kernel&lt;float, long, Eigen::internal::blas_data_mapper&lt;float, long, 0, 0, 1&gt;, false, false&gt;::operator (154,116 samples, 0.23%)</title><rect x="323.7" y="117" width="2.7" height="15.0" fill="rgb(214,196,6)" rx="2" ry="2" />
+<text  x="326.72" y="127.5" ></text>
+</g>
+<g >
+<title>bthread::TaskControl::steal_task (127,265 samples, 0.19%)</title><rect x="574.9" y="69" width="2.3" height="15.0" fill="rgb(214,64,23)" rx="2" ry="2" />
+<text  x="577.94" y="79.5" ></text>
+</g>
+<g >
+<title>brpc::RedisRequest::AddCommandWithArgs (50,007 samples, 0.07%)</title><rect x="191.4" y="197" width="0.9" height="15.0" fill="rgb(217,124,16)" rx="2" ry="2" />
+<text  x="194.39" y="207.5" ></text>
+</g>
+<g >
+<title>brpc::policy::ProcessNettyThriftResponse (467,058 samples, 0.69%)</title><rect x="551.6" y="165" width="8.1" height="15.0" fill="rgb(247,210,52)" rx="2" ry="2" />
+<text  x="554.56" y="175.5" ></text>
+</g>
+<g >
+<title>update_get_addr (87,144 samples, 0.13%)</title><rect x="186.4" y="117" width="1.5" height="15.0" fill="rgb(242,8,1)" rx="2" ry="2" />
+<text  x="189.40" y="127.5" ></text>
+</g>
+<g >
+<title>brpc::Controller::Call::OnComplete (183,224 samples, 0.27%)</title><rect x="528.7" y="149" width="3.2" height="15.0" fill="rgb(214,8,23)" rx="2" ry="2" />
+<text  x="531.66" y="159.5" ></text>
+</g>
+<g >
+<title>Eigen::ThreadPoolTempl&lt;tensorflow::thread::EigenEnvironment&gt;::ScheduleWithHint (114,126 samples, 0.17%)</title><rect x="389.6" y="149" width="2.0" height="15.0" fill="rgb(238,78,54)" rx="2" ry="2" />
+<text  x="392.62" y="159.5" ></text>
+</g>
+<g >
+<title>bthread::get_stack (38,443 samples, 0.06%)</title><rect x="620.9" y="197" width="0.7" height="15.0" fill="rgb(219,32,38)" rx="2" ry="2" />
+<text  x="623.93" y="207.5" ></text>
+</g>
+<g >
+<title>tcache_bin_flush_edatas_lookup.isra.26 (81,962 samples, 0.12%)</title><rect x="120.6" y="229" width="1.5" height="15.0" fill="rgb(247,140,28)" rx="2" ry="2" />
+<text  x="123.63" y="239.5" ></text>
+</g>
+<g >
+<title>je_extent_record (162,910 samples, 0.24%)</title><rect x="106.5" y="229" width="2.8" height="15.0" fill="rgb(224,193,1)" rx="2" ry="2" />
+<text  x="109.47" y="239.5" ></text>
+</g>
+<g >
+<title>Eigen::internal::gemm_pack_colmajor_block&lt;float, long, Eigen::internal::TensorContractionSubMapper&lt;float, long, 1, Eigen::TensorEvaluator&lt;Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::ThreadPoolDevice&gt;, Eigen::array&lt;long, 1ul&gt;, Eigen::array&lt;long, 1ul&gt;, 8, true, false, 0, Eigen::MakePointer&gt;, 0&gt;::operator (1,104,321 samples, 1.63%)</title><rect x="302.4" y="149" width="19.3" height="15.0" fill="rgb(217,171,49)" rx="2" ry="2" />
+<text  x="305.40" y="159.5" ></text>
+</g>
+<g >
+<title>[common.so] (1,377,502 samples, 2.04%)</title><rect x="122.9" y="229" width="24.1" height="15.0" fill="rgb(205,2,0)" rx="2" ry="2" />
+<text  x="125.91" y="239.5" >[..</text>
+</g>
+<g >
+<title>[unknown] (125,294 samples, 0.19%)</title><rect x="353.9" y="149" width="2.2" height="15.0" fill="rgb(251,78,17)" rx="2" ry="2" />
+<text  x="356.91" y="159.5" ></text>
+</g>
+<g >
+<title>pac_alloc_impl (144,244 samples, 0.21%)</title><rect x="114.8" y="213" width="2.5" height="15.0" fill="rgb(227,133,46)" rx="2" ry="2" />
+<text  x="117.79" y="223.5" ></text>
+</g>
+<g >
+<title>pthread_mutex_unlock (43,701 samples, 0.06%)</title><rect x="484.5" y="149" width="0.7" height="15.0" fill="rgb(226,129,27)" rx="2" ry="2" />
+<text  x="487.48" y="159.5" ></text>
+</g>
+<g >
+<title>bthread::TaskControl::choose_one_group (87,403 samples, 0.13%)</title><rect x="624.8" y="165" width="1.6" height="15.0" fill="rgb(216,56,2)" rx="2" ry="2" />
+<text  x="627.83" y="175.5" ></text>
+</g>
+<g >
+<title>__cxxabiv1::__si_class_type_info::__do_dyncast (91,829 samples, 0.14%)</title><rect x="119.0" y="197" width="1.6" height="15.0" fill="rgb(252,168,5)" rx="2" ry="2" />
+<text  x="122.03" y="207.5" ></text>
+</g>
+<g >
+<title>dnnl::impl::cpu::extended_sgemm (25,981 samples, 0.04%)</title><rect x="358.5" y="133" width="0.5" height="15.0" fill="rgb(232,221,39)" rx="2" ry="2" />
+<text  x="361.52" y="143.5" ></text>
+</g>
+<g >
+<title>brpc::Controller::OnVersionedRPCReturned (430,720 samples, 0.64%)</title><rect x="528.7" y="181" width="7.5" height="15.0" fill="rgb(235,145,41)" rx="2" ry="2" />
+<text  x="531.66" y="191.5" ></text>
+</g>
+<g >
+<title>__random_r (291,621 samples, 0.43%)</title><rect x="179.2" y="229" width="5.1" height="15.0" fill="rgb(236,178,32)" rx="2" ry="2" />
+<text  x="182.25" y="239.5" ></text>
+</g>
+<g >
+<title>je_edata_avail_first (93,430 samples, 0.14%)</title><rect x="103.0" y="229" width="1.7" height="15.0" fill="rgb(244,90,13)" rx="2" ry="2" />
+<text  x="106.02" y="239.5" ></text>
+</g>
+<g >
+<title>[unknown] (91,829 samples, 0.14%)</title><rect x="119.0" y="213" width="1.6" height="15.0" fill="rgb(227,111,22)" rx="2" ry="2" />
+<text  x="122.03" y="223.5" ></text>
+</g>
+<g >
+<title>tensorflow::ConcatBaseOp&lt;Eigen::ThreadPoolDevice, float,  (82,351 samples, 0.12%)</title><rect x="468.8" y="149" width="1.5" height="15.0" fill="rgb(228,143,11)" rx="2" ry="2" />
+<text  x="471.83" y="159.5" ></text>
+</g>
+<g >
+<title>bthread::TimerThread::Bucket::schedule (120,360 samples, 0.18%)</title><rect x="521.9" y="85" width="2.1" height="15.0" fill="rgb(222,95,51)" rx="2" ry="2" />
+<text  x="524.91" y="95.5" ></text>
+</g>
+<g >
+<title>fast_memcpy (50,007 samples, 0.07%)</title><rect x="191.4" y="165" width="0.9" height="15.0" fill="rgb(222,94,26)" rx="2" ry="2" />
+<text  x="194.39" y="175.5" ></text>
+</g>
+<g >
+<title>qiao::feature_extract::func_extract&lt;std::pair&lt;Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 1, 1, long&gt;, 16, Eigen::MakePointer&gt;, Eigen::TensorMap&lt;Eigen::Tensor&lt;long long const, 1, 1, long&gt;, 16, Eigen::MakePointer&gt; &gt;, std::vector&lt;float, std::allocator&lt;float&gt; &gt; const*&gt; (77,991 samples, 0.12%)</title><rect x="439.2" y="117" width="1.4" height="15.0" fill="rgb(240,5,5)" rx="2" ry="2" />
+<text  x="442.21" y="127.5" ></text>
+</g>
+<g >
+<title>__libc_nanosleep (222,619 samples, 0.33%)</title><rect x="160.4" y="229" width="3.9" height="15.0" fill="rgb(231,169,23)" rx="2" ry="2" />
+<text  x="163.38" y="239.5" ></text>
+</g>
+<g >
+<title>qiao::feature_extract::func_extract&lt;std::pair&lt;Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 1, 1, long&gt;, 16, Eigen::MakePointer&gt;, Eigen::TensorMap&lt;Eigen::Tensor&lt;long long const, 1, 1, long&gt;, 16, Eigen::MakePointer&gt; &gt;, std::vector&lt;float, std::allocator&lt;float&gt; &gt; const*&gt; (77,991 samples, 0.12%)</title><rect x="439.2" y="101" width="1.4" height="15.0" fill="rgb(239,203,26)" rx="2" ry="2" />
+<text  x="442.21" y="111.5" ></text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::EvalParallelContext&lt;Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::NoCallback, true, true, false, 0&gt;::pack_lhs (1,303,649 samples, 1.93%)</title><rect x="298.9" y="165" width="22.8" height="15.0" fill="rgb(228,77,36)" rx="2" ry="2" />
+<text  x="301.91" y="175.5" >E..</text>
+</g>
+<g >
+<title>brpc::Acceptor::ListConnections (146,903 samples, 0.22%)</title><rect x="548.2" y="197" width="2.5" height="15.0" fill="rgb(250,50,15)" rx="2" ry="2" />
+<text  x="551.16" y="207.5" ></text>
+</g>
+<g >
+<title>Eigen::internal::TensorContractionKernel&lt;float, float, float, long, Eigen::internal::blas_data_mapper&lt;float, long, 0, 0, 1&gt;, Eigen::internal::TensorContractionInputMapper&lt;float, long, 1, Eigen::TensorEvaluator&lt;Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::ThreadPoolDevice&gt;, Eigen::array&lt;long, 1ul&gt;, Eigen::array&lt;long, 1ul&gt;, 8, true, false, 0, Eigen::MakePointer&gt;, Eigen::internal::TensorContractionInputMapper&lt;float, long, 0, Eigen::TensorEvaluator&lt;Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::ThreadPoolDevice&gt;, Eigen::array&lt;long, 1ul&gt;, Eigen::array&lt;long, 1ul&gt;, 8, true, false, 0, Eigen::MakePointer&gt; &gt;::invoke (25,981 samples, 0.04%)</title><rect x="358.5" y="181" width="0.5" height="15.0" fill="rgb(207,199,11)" rx="2" ry="2" />
+<text  x="361.52" y="191.5" ></text>
+</g>
+<g >
+<title>predict::infer::InferForwardCachedClientT&lt;lambda::framework::ProtostuffHelper&gt;::startBackgroud (1,034,663 samples, 1.53%)</title><rect x="192.3" y="229" width="18.0" height="15.0" fill="rgb(207,133,48)" rx="2" ry="2" />
+<text  x="195.27" y="239.5" ></text>
+</g>
+<g >
+<title>bthread_usleep (1,178,852 samples, 1.75%)</title><rect x="508.1" y="165" width="20.6" height="15.0" fill="rgb(250,160,47)" rx="2" ry="2" />
+<text  x="511.07" y="175.5" ></text>
+</g>
+<g >
+<title>brpc::Controller::EndRPC (114,769 samples, 0.17%)</title><rect x="559.7" y="133" width="2.0" height="15.0" fill="rgb(207,18,53)" rx="2" ry="2" />
+<text  x="562.72" y="143.5" ></text>
+</g>
+<g >
+<title>bvar::get_sampling_ratio (56,539 samples, 0.08%)</title><rect x="1185.7" y="197" width="1.0" height="15.0" fill="rgb(208,145,39)" rx="2" ry="2" />
+<text  x="1188.73" y="207.5" ></text>
+</g>
+<g >
+<title>brpc::policy::SerializeRedisRequest (87,144 samples, 0.13%)</title><rect x="186.4" y="181" width="1.5" height="15.0" fill="rgb(240,39,36)" rx="2" ry="2" />
+<text  x="189.40" y="191.5" ></text>
+</g>
+<g >
+<title>qiao::Client::session_t::clear (325,558 samples, 0.48%)</title><rect x="581.0" y="133" width="5.7" height="15.0" fill="rgb(234,178,48)" rx="2" ry="2" />
+<text  x="583.98" y="143.5" ></text>
+</g>
+<g >
+<title>syscall (117,088 samples, 0.17%)</title><rect x="496.4" y="165" width="2.0" height="15.0" fill="rgb(216,168,48)" rx="2" ry="2" />
+<text  x="499.38" y="175.5" ></text>
+</g>
+<g >
+<title>__pthread_disable_asynccancel (43,666 samples, 0.06%)</title><rect x="166.1" y="229" width="0.8" height="15.0" fill="rgb(205,211,45)" rx="2" ry="2" />
+<text  x="169.15" y="239.5" ></text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::EvalParallelContext&lt;Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::NoCallback, true, true, false, 0&gt;::enqueue_packing_helper (205,304 samples, 0.30%)</title><rect x="471.8" y="69" width="3.6" height="15.0" fill="rgb(210,220,53)" rx="2" ry="2" />
+<text  x="474.79" y="79.5" ></text>
+</g>
+<g >
+<title>bthread::butex_wake_all (282,014 samples, 0.42%)</title><rect x="551.6" y="101" width="4.9" height="15.0" fill="rgb(247,183,4)" rx="2" ry="2" />
+<text  x="554.56" y="111.5" ></text>
+</g>
+<g >
+<title>[unknown] (635,025 samples, 0.94%)</title><rect x="148.0" y="213" width="11.1" height="15.0" fill="rgb(211,171,20)" rx="2" ry="2" />
+<text  x="151.04" y="223.5" ></text>
+</g>
+<g >
+<title>qiao::Client::recv (127,265 samples, 0.19%)</title><rect x="574.9" y="133" width="2.3" height="15.0" fill="rgb(222,192,30)" rx="2" ry="2" />
+<text  x="577.94" y="143.5" ></text>
+</g>
+<g >
+<title>[predict.so] (71,576 samples, 0.11%)</title><rect x="159.1" y="229" width="1.3" height="15.0" fill="rgb(227,93,35)" rx="2" ry="2" />
+<text  x="162.13" y="239.5" ></text>
+</g>
+<g >
+<title>brpc::ThriftStub::CallMethod&lt;qiao::thrift::PullRequest, qiao::thrift::PullResponse&gt; (218,453 samples, 0.32%)</title><rect x="577.2" y="117" width="3.8" height="15.0" fill="rgb(212,30,29)" rx="2" ry="2" />
+<text  x="580.17" y="127.5" ></text>
+</g>
+<g >
+<title>butil::fast_rand_less_than (87,403 samples, 0.13%)</title><rect x="624.8" y="149" width="1.6" height="15.0" fill="rgb(212,63,40)" rx="2" ry="2" />
+<text  x="627.83" y="159.5" ></text>
+</g>
+<g >
+<title>DumpFeature::init (325,764 samples, 0.48%)</title><rect x="122.9" y="213" width="5.7" height="15.0" fill="rgb(235,178,18)" rx="2" ry="2" />
+<text  x="125.91" y="223.5" ></text>
+</g>
+<g >
+<title>__lll_unlock_wake (204,238 samples, 0.30%)</title><rect x="480.9" y="149" width="3.6" height="15.0" fill="rgb(234,220,9)" rx="2" ry="2" />
+<text  x="483.91" y="159.5" ></text>
+</g>
+<g >
+<title>Eigen::ThreadPoolTempl&lt;tensorflow::thread::EigenEnvironment&gt;::Schedule (114,126 samples, 0.17%)</title><rect x="389.6" y="165" width="2.0" height="15.0" fill="rgb(207,34,31)" rx="2" ry="2" />
+<text  x="392.62" y="175.5" ></text>
+</g>
+<g >
+<title>CGraph::UThreadPrimary::run (1,166,984 samples, 1.73%)</title><rect x="479.1" y="213" width="20.3" height="15.0" fill="rgb(242,13,38)" rx="2" ry="2" />
+<text  x="482.05" y="223.5" ></text>
+</g>
+<g >
+<title>[unknown] (114,783 samples, 0.17%)</title><rect x="496.4" y="101" width="2.0" height="15.0" fill="rgb(208,144,22)" rx="2" ry="2" />
+<text  x="499.42" y="111.5" ></text>
+</g>
+<g >
+<title>tensorflow::serving::BasicManager::GetManagedServableNames (88,066 samples, 0.13%)</title><rect x="499.5" y="181" width="1.5" height="15.0" fill="rgb(235,161,27)" rx="2" ry="2" />
+<text  x="502.46" y="191.5" ></text>
+</g>
+<g >
+<title>std::string::assign (209,603 samples, 0.31%)</title><rect x="539.3" y="165" width="3.6" height="15.0" fill="rgb(249,53,42)" rx="2" ry="2" />
+<text  x="542.27" y="175.5" ></text>
+</g>
+<g >
+<title>bthread::TimerThread::run_this (328,591 samples, 0.49%)</title><rect x="624.8" y="229" width="5.8" height="15.0" fill="rgb(214,127,1)" rx="2" ry="2" />
+<text  x="627.83" y="239.5" ></text>
+</g>
+<g >
+<title>__sched_yield (465,724 samples, 0.69%)</title><rect x="486.1" y="165" width="8.1" height="15.0" fill="rgb(212,77,48)" rx="2" ry="2" />
+<text  x="489.07" y="175.5" ></text>
+</g>
+<g >
+<title>bthread::TaskGroup::sched_to (480,132 samples, 0.71%)</title><rect x="520.3" y="117" width="8.4" height="15.0" fill="rgb(240,103,7)" rx="2" ry="2" />
+<text  x="523.27" y="127.5" ></text>
+</g>
+<g >
+<title>bthread::butex_wait (127,265 samples, 0.19%)</title><rect x="574.9" y="101" width="2.3" height="15.0" fill="rgb(215,224,52)" rx="2" ry="2" />
+<text  x="577.94" y="111.5" ></text>
+</g>
+<g >
+<title>Eigen::internal::TensorBlockIO&lt;float, long, 4, 1&gt;::Copy (209,401 samples, 0.31%)</title><rect x="465.2" y="37" width="3.6" height="15.0" fill="rgb(220,140,9)" rx="2" ry="2" />
+<text  x="468.17" y="47.5" ></text>
+</g>
+<g >
+<title>__memcpy_ssse3 (106,311 samples, 0.16%)</title><rect x="524.0" y="69" width="1.9" height="15.0" fill="rgb(217,46,11)" rx="2" ry="2" />
+<text  x="527.01" y="79.5" ></text>
+</g>
+<g >
+<title>bthread_start_urgent (82,122 samples, 0.12%)</title><rect x="503.0" y="165" width="1.5" height="15.0" fill="rgb(227,217,17)" rx="2" ry="2" />
+<text  x="506.02" y="175.5" ></text>
+</g>
+<g >
+<title>brpc::Controller::~Controller (169,378 samples, 0.25%)</title><rect x="582.2" y="117" width="2.9" height="15.0" fill="rgb(228,80,52)" rx="2" ry="2" />
+<text  x="585.16" y="127.5" ></text>
+</g>
+<g >
+<title>Eigen::internal::TensorBlockAssignment&lt;float, 2, Eigen::TensorCwiseBinaryOp&lt;Eigen::internal::scalar_product_op&lt;float, float&gt;, Eigen::TensorMap&lt;Eigen::Tensor&lt;float, 2, 1, long&gt; const, 0, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float, 2, 1, long&gt; const, 0, Eigen::MakePointer&gt; const&gt;, long&gt;::Run (141,862 samples, 0.21%)</title><rect x="462.7" y="85" width="2.5" height="15.0" fill="rgb(250,217,52)" rx="2" ry="2" />
+<text  x="465.69" y="95.5" ></text>
+</g>
+<g >
+<title>[unknown] (115,509 samples, 0.17%)</title><rect x="496.4" y="149" width="2.0" height="15.0" fill="rgb(218,21,42)" rx="2" ry="2" />
+<text  x="499.40" y="159.5" ></text>
+</g>
+<g >
+<title>brpc::Socket::FeedbackCircuitBreaker (72,603 samples, 0.11%)</title><rect x="530.6" y="133" width="1.3" height="15.0" fill="rgb(219,84,26)" rx="2" ry="2" />
+<text  x="533.59" y="143.5" ></text>
+</g>
+<g >
+<title>__pthread_enable_asynccancel (92,735 samples, 0.14%)</title><rect x="130.0" y="213" width="1.6" height="15.0" fill="rgb(218,139,28)" rx="2" ry="2" />
+<text  x="133.01" y="223.5" ></text>
+</g>
+<g >
+<title>start_thread (33,558,605 samples, 49.68%)</title><rect x="600.4" y="245" width="586.3" height="15.0" fill="rgb(218,152,25)" rx="2" ry="2" />
+<text  x="603.44" y="255.5" >start_thread</text>
+</g>
+<g >
+<title>tensorflow::FusedMatMulOp&lt;Eigen::ThreadPoolDevice, float&gt;::Compute (205,304 samples, 0.30%)</title><rect x="471.8" y="149" width="3.6" height="15.0" fill="rgb(229,35,26)" rx="2" ry="2" />
+<text  x="474.79" y="159.5" ></text>
+</g>
+<g >
+<title>tensorflow::(anonymous namespace)::ExecutorState&lt;tensorflow::PropagatorState&gt;::ProcessAsync (200,199 samples, 0.30%)</title><rect x="589.6" y="165" width="3.5" height="15.0" fill="rgb(212,43,28)" rx="2" ry="2" />
+<text  x="592.56" y="175.5" ></text>
+</g>
+<g >
+<title>[unknown] (281,572 samples, 0.42%)</title><rect x="489.3" y="133" width="4.9" height="15.0" fill="rgb(254,22,13)" rx="2" ry="2" />
+<text  x="492.28" y="143.5" ></text>
+</g>
+<g >
+<title>dnnl::impl::cpu::x64::adjust_thread_count&lt;float&gt; (24,936 samples, 0.04%)</title><rect x="379.2" y="101" width="0.4" height="15.0" fill="rgb(219,213,20)" rx="2" ry="2" />
+<text  x="382.20" y="111.5" ></text>
+</g>
+<g >
+<title>dnnl::impl::cpu::x64::(anonymous namespace)::mayiuse (25,981 samples, 0.04%)</title><rect x="358.5" y="85" width="0.5" height="15.0" fill="rgb(210,74,41)" rx="2" ry="2" />
+<text  x="361.52" y="95.5" ></text>
+</g>
+<g >
+<title>bthread::TaskGroup::sched (127,265 samples, 0.19%)</title><rect x="574.9" y="85" width="2.3" height="15.0" fill="rgb(215,202,6)" rx="2" ry="2" />
+<text  x="577.94" y="95.5" ></text>
+</g>
+<g >
+<title>qiao::get_shard_rank_maybe_ps_decouple@plt (165,489 samples, 0.25%)</title><rect x="586.7" y="165" width="2.9" height="15.0" fill="rgb(225,54,6)" rx="2" ry="2" />
+<text  x="589.67" y="175.5" ></text>
+</g>
+<g >
+<title>execute_native_thread_routine (21,676,392 samples, 32.09%)</title><rect x="122.9" y="245" width="378.7" height="15.0" fill="rgb(221,208,52)" rx="2" ry="2" />
+<text  x="125.90" y="255.5" >execute_native_thread_routine</text>
+</g>
+<g >
+<title>qiao::Client::send (218,453 samples, 0.32%)</title><rect x="577.2" y="133" width="3.8" height="15.0" fill="rgb(214,96,46)" rx="2" ry="2" />
+<text  x="580.17" y="143.5" ></text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::EvalParallelContext&lt;Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::NoCallback, true, true, false, 0&gt;::kernel (154,116 samples, 0.23%)</title><rect x="323.7" y="149" width="2.7" height="15.0" fill="rgb(212,160,25)" rx="2" ry="2" />
+<text  x="326.72" y="159.5" ></text>
+</g>
+<g >
+<title>pthread_mutex_unlock (49,244 samples, 0.07%)</title><rect x="220.1" y="213" width="0.8" height="15.0" fill="rgb(226,224,13)" rx="2" ry="2" />
+<text  x="223.07" y="223.5" ></text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::EvalParallelContext&lt;Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::NoCallback, true, true, false, 0&gt;::enqueue_packing_helper (3,299,215 samples, 4.88%)</title><rect x="298.9" y="197" width="57.7" height="15.0" fill="rgb(253,76,38)" rx="2" ry="2" />
+<text  x="301.91" y="207.5" >Eigen:..</text>
+</g>
+<g >
+<title>_IO_default_xsputn (120,088 samples, 0.18%)</title><rect x="97.9" y="213" width="2.1" height="15.0" fill="rgb(245,22,28)" rx="2" ry="2" />
+<text  x="100.89" y="223.5" ></text>
+</g>
+<g >
+<title>[unknown] (47,613 samples, 0.07%)</title><rect x="102.2" y="197" width="0.8" height="15.0" fill="rgb(243,16,24)" rx="2" ry="2" />
+<text  x="105.18" y="207.5" ></text>
+</g>
+<g >
+<title>CGraph::UThreadPrimary::processTask (1,108,598 samples, 1.64%)</title><rect x="479.1" y="181" width="19.3" height="15.0" fill="rgb(224,22,31)" rx="2" ry="2" />
+<text  x="482.05" y="191.5" ></text>
+</g>
+<g >
+<title>brpc::EventDispatcher::Run (163,784 samples, 0.24%)</title><rect x="501.6" y="197" width="2.9" height="15.0" fill="rgb(254,92,44)" rx="2" ry="2" />
+<text  x="504.60" y="207.5" ></text>
+</g>
+<g >
+<title>std::_Function_handler&lt;void  (1,347,947 samples, 2.00%)</title><rect x="569.5" y="197" width="23.6" height="15.0" fill="rgb(244,115,5)" rx="2" ry="2" />
+<text  x="572.51" y="207.5" >s..</text>
+</g>
+<g >
+<title>tensorflow::Device::ComputeAsync (87,190 samples, 0.13%)</title><rect x="470.3" y="149" width="1.5" height="15.0" fill="rgb(252,212,11)" rx="2" ry="2" />
+<text  x="473.27" y="159.5" ></text>
+</g>
+<g >
+<title>brpc::RedisRequest::GetMetadata (87,144 samples, 0.13%)</title><rect x="186.4" y="165" width="1.5" height="15.0" fill="rgb(246,37,27)" rx="2" ry="2" />
+<text  x="189.40" y="175.5" ></text>
+</g>
+<g >
+<title>brpc::policy::SerializeNettyThriftRequest (218,453 samples, 0.32%)</title><rect x="577.2" y="85" width="3.8" height="15.0" fill="rgb(210,197,15)" rx="2" ry="2" />
+<text  x="580.17" y="95.5" ></text>
+</g>
+<g >
+<title>bthread::TaskGroup::ending_sched (335,902 samples, 0.50%)</title><rect x="563.6" y="213" width="5.9" height="15.0" fill="rgb(249,20,1)" rx="2" ry="2" />
+<text  x="566.64" y="223.5" ></text>
+</g>
+<g >
+<title>Eigen::ThreadPoolDevice::parallelFor (209,401 samples, 0.31%)</title><rect x="465.2" y="101" width="3.6" height="15.0" fill="rgb(249,59,34)" rx="2" ry="2" />
+<text  x="468.17" y="111.5" ></text>
+</g>
+<g >
+<title>bthread::TimerThread::schedule (106,311 samples, 0.16%)</title><rect x="524.0" y="85" width="1.9" height="15.0" fill="rgb(220,190,5)" rx="2" ry="2" />
+<text  x="527.01" y="95.5" ></text>
+</g>
+<g >
+<title>dnnl::impl::cpu::x64::gemm_info_t&lt;float, float, float&gt;::jit_init (42,329 samples, 0.06%)</title><rect x="379.6" y="85" width="0.8" height="15.0" fill="rgb(229,152,48)" rx="2" ry="2" />
+<text  x="382.64" y="95.5" ></text>
+</g>
+<g >
+<title>bvar::detail::SamplerCollector::sampling_thread (31,833,966 samples, 47.13%)</title><rect x="630.6" y="229" width="556.1" height="15.0" fill="rgb(206,13,0)" rx="2" ry="2" />
+<text  x="633.57" y="239.5" >bvar::detail::SamplerCollector::sampling_thread</text>
+</g>
+<g >
+<title>bthread::internal::FastPthreadMutex::lock (185,044 samples, 0.27%)</title><rect x="556.5" y="101" width="3.2" height="15.0" fill="rgb(239,37,41)" rx="2" ry="2" />
+<text  x="559.49" y="111.5" ></text>
+</g>
+<g >
+<title>[unknown] (53,494 samples, 0.08%)</title><rect x="128.6" y="197" width="0.9" height="15.0" fill="rgb(237,38,29)" rx="2" ry="2" />
+<text  x="131.60" y="207.5" ></text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Relu&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::EvalParallelContext&lt;Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Relu&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::NoCallback, true, true, false, 0&gt;::kernel (67,265 samples, 0.10%)</title><rect x="379.2" y="197" width="1.2" height="15.0" fill="rgb(209,24,43)" rx="2" ry="2" />
+<text  x="382.20" y="207.5" ></text>
+</g>
+<g >
+<title>bthread_jump_fcontext (105,497 samples, 0.16%)</title><rect x="621.6" y="197" width="1.8" height="15.0" fill="rgb(229,67,9)" rx="2" ry="2" />
+<text  x="624.60" y="207.5" ></text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Relu&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::EvalParallelContext&lt;Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Relu&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::NoCallback, true, true, false, 0&gt;::enqueue_packing_helper (572,326 samples, 0.85%)</title><rect x="359.0" y="181" width="10.0" height="15.0" fill="rgb(225,208,18)" rx="2" ry="2" />
+<text  x="361.97" y="191.5" ></text>
+</g>
+<g >
+<title>bthread::TimerThread::Task::run_and_delete (327,932 samples, 0.49%)</title><rect x="624.8" y="197" width="5.8" height="15.0" fill="rgb(230,24,41)" rx="2" ry="2" />
+<text  x="627.83" y="207.5" ></text>
+</g>
+<g >
+<title>__clock_gettime (170,589 samples, 0.25%)</title><rect x="511.6" y="117" width="3.0" height="15.0" fill="rgb(211,19,30)" rx="2" ry="2" />
+<text  x="514.59" y="127.5" ></text>
+</g>
+<g >
+<title>syscall (488,071 samples, 0.72%)</title><rect x="138.4" y="213" width="8.6" height="15.0" fill="rgb(209,212,1)" rx="2" ry="2" />
+<text  x="141.45" y="223.5" ></text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Relu&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::EvalParallelContext&lt;Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Relu&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::NoCallback, true, true, false, 0&gt;::pack_rhs (85,997 samples, 0.13%)</title><rect x="375.7" y="181" width="1.5" height="15.0" fill="rgb(230,89,42)" rx="2" ry="2" />
+<text  x="378.70" y="191.5" ></text>
+</g>
+<g >
+<title>bthread_start_background (58,493 samples, 0.09%)</title><rect x="501.6" y="117" width="1.0" height="15.0" fill="rgb(228,130,9)" rx="2" ry="2" />
+<text  x="504.60" y="127.5" ></text>
+</g>
+<g >
+<title>pthread_mutex_unlock (64,359 samples, 0.10%)</title><rect x="535.1" y="101" width="1.1" height="15.0" fill="rgb(221,200,38)" rx="2" ry="2" />
+<text  x="538.06" y="111.5" ></text>
+</g>
+<g >
+<title>__random (597,377 samples, 0.88%)</title><rect x="168.8" y="229" width="10.4" height="15.0" fill="rgb(221,188,33)" rx="2" ry="2" />
+<text  x="171.81" y="239.5" ></text>
+</g>
+<g >
+<title>Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::EvalParallelContext&lt;Eigen::TensorEvaluator&lt;Eigen::TensorContractionOp&lt;Eigen::array&lt;Eigen::IndexPair&lt;long&gt;, 1ul&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, Eigen::TensorMap&lt;Eigen::Tensor&lt;float const, 2, 1, long&gt;, 16, Eigen::MakePointer&gt; const, tensorflow::BiasAddOutputKernel&lt;float, tensorflow::Identity&gt; const&gt; const, Eigen::ThreadPoolDevice&gt;::NoCallback, true, true, false, 0&gt;::signal_switch (205,304 samples, 0.30%)</title><rect x="471.8" y="101" width="3.6" height="15.0" fill="rgb(226,6,12)" rx="2" ry="2" />
+<text  x="474.79" y="111.5" ></text>
+</g>
+<g >
+<title>tensorflow::serving::PeriodicFunction::RunLoop (122,284 samples, 0.18%)</title><rect x="499.5" y="229" width="2.1" height="15.0" fill="rgb(254,226,54)" rx="2" ry="2" />
+<text  x="502.46" y="239.5" ></text>
+</g>
+</g>
+</svg>

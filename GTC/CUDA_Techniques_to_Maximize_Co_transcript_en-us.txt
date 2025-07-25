@@ -1,0 +1,4988 @@
+Transcript Powered by AI
+
+CUDA Techniques to Maximize Concurrency and System Utilization
+
+
+00:02
+So, hello everyone.
+
+00:03
+Welcome to GTC.
+
+00:06
+Hope you have rested well, had your lunch, and then, you know, so keep
+
+00:11
+your, one announcement important, keep your phones on silent.
+
+00:15
+So, let's start with the session today.
+
+00:18
+My name is Kartik Sajdev.
+
+00:20
+I'm a solution architect in robotics and AI at NVIDIA.
+
+00:24
+Today I'll be your host for the session.
+
+00:27
+Before we begin, there are a couple of housekeeping items
+
+00:30
+I would like to inform you.
+
+00:32
+So firstly, don't forget to download the NVIDIA GTC mobile
+
+00:37
+app for the latest updates, session catalogs, a quick and a
+
+00:41
+complete session survey, and more.
+
+00:44
+Explore the exhibit hall on level 2.
+
+00:47
+It opens today at 1pm.
+
+00:49
+Don't miss the exhibit hall reception from 5 to 7pm.
+
+00:53
+It will be an opportunity to connect with the experts
+
+00:57
+and the other attendees.
+
+00:59
+Make sure you check out the GTC park, where you'll find
+
+01:02
+the art installations, launch areas, food trucks, launch
+
+01:06
+services, and sponsor activations, as well as our vibrant night
+
+01:11
+market that starts from 7 p.m.
+
+01:14
+and runs till 9 p.m.
+
+01:17
+The session recordings will be made available to the attendees
+
+01:20
+in the session catalog within 48 hours, and to the public on
+
+01:26
+NVIDIA OnDemand from the next week.
+
+01:31
+So let's get started with our session, namely cuda techniques
+
+01:35
+to maximize concurrency and system utilization.
+
+01:41
+So for this, we have our presenters, Myro and Igor.
+
+01:47
+So Myrto is a, I think I pronounced her name wrongly in the first
+
+01:53
+place, but I would correct it.
+
+01:55
+So she's an engineer at the developer technology team
+
+01:59
+at NVIDIA, where she works on performance optimization.
+
+02:03
+She holds a PhD from University of Toronto, Canada, and the
+
+02:07
+area of computer architecture.
+
+02:10
+And Igor holds a PhD in Computational and Applied
+
+02:13
+Mathematics from Rice University.
+
+02:16
+He has over 10 years of experience as a researcher and software
+
+02:19
+engineer in the oil and gas industry, specializing in
+
+02:24
+seismic imaging and inversion.
+
+02:27
+So without any further ado, I would start with our first
+
+02:32
+speaker, and let's welcome him on the stage, Mr. Igor.
+
+02:42
+Thank you, Mr. Chairman.
+
+02:48
+So, today, in this presentation, we are going to talk about
+
+02:52
+optimizations above the kernel level, and we'll talk in detail
+
+02:58
+about CUDA streams, graphs, programmatic-dependent launch,
+
+03:04
+and GPU resource mechanisms.
+
+03:06
+And on top of that, we will introduce a new Blackwell feature
+
+03:09
+called Cluster Launch Control.
+
+03:13
+So some abbreviations that we are going to use in this presentation.
+
+03:17
+CTA is a synonym of a thread block.
+
+03:20
+CJA is a synonym for the thread block cluster.
+
+03:25
+Also, I will often call kernels that are launched into...
+
+03:31
+High-priority streams, I refer to them as high-priority kernels.
+
+03:36
+And in the code snippets, you'll see the following abbreviations.
+
+03:39
+Namespace for the cooperative groups.
+
+03:41
+And for the brevity, I will not use full namespace CUDA-PTX.
+
+03:47
+So you'll see the namespace in the code starts from PTX.
+
+03:54
+Okay, let's start with the CUDA streams.
+
+03:59
+As you know, GPU tasks execute asynchronously with respect
+
+04:03
+to the CPU, and moreover, they can execute concurrently
+
+04:07
+with respect to each other.
+
+04:11
+So CUDA streams provide mechanisms for running GPU tasks concurrently
+
+04:15
+with respect to each other and to synchronize them with respect to
+
+04:18
+the CPU and to each other as well.
+
+04:22
+I suspect most of you are familiar with CUDA streams, and I just
+
+04:26
+want to list some properties here.
+
+04:27
+On creation, a stream is associated with an active GPU, which
+
+04:32
+can, for instance, be set by a CUDA set device.
+
+04:35
+And all GPU tasks, such as kernels or memory copies and so on,
+
+04:41
+that are submitted into a stream, execute in the submission order
+
+04:45
+without overlap within the stream.
+
+04:48
+With one exception, which Myrto will talk about later,
+
+04:51
+that is called programmatic dependent launch.
+
+04:59
+Streams allow us to synchronize with respect to CPU and each
+
+05:06
+other, as I said.
+
+05:08
+And now let me talk about one special stream, namely
+
+05:13
+default stream, which is often you can omit it in the CUDA API
+
+05:19
+calls or kernel launches, or you can use index zero to specify it.
+
+05:26
+So, as I said, CUDA streams can execute tasks concurrently,
+
+05:31
+but that only relates to explicitly created streams and does not
+
+05:36
+apply to the default stream, which executes tasks synchronously
+
+05:42
+with respect to other streams.
+
+05:44
+For example, here in the code, let me have a laser pointer.
+
+05:49
+For example, here in the code, kernels A, B, and C will never
+
+05:55
+overlap despite kernels A and C launched into different streams.
+
+06:00
+However, this behavior of the default stream can be fixed.
+
+06:04
+There are two ways to do it.
+
+06:06
+So there are compiler options.
+
+06:08
+You can use one of these two listed here.
+
+06:12
+Or even if the default stream is synchronous, you can make
+
+06:18
+your explicitly created streams to behave asynchronously with respect
+
+06:24
+to the default stream by using cudaStreamCreateWithFlags API and
+
+06:30
+specifying cudaStreamNonBlocking when you create your stream.
+
+06:35
+So, general recommendation is to avoid using default stream
+
+06:39
+because of this synchronization and to create your stream
+
+06:43
+with cudaStreamNonBlocking because, for instance, when
+
+06:46
+you are writing a library, even if all your streams are created,
+
+06:52
+even if you don't use a default stream, your library can be used
+
+06:55
+in somebody else's code that uses default stream, so your library
+
+06:59
+will hit synchronization issues.
+
+07:03
+Another property of streams is that they can have priorities,
+
+07:06
+and there are APIs that return supported priority range.
+
+07:13
+And here's the call to create a stream with priority.
+
+07:18
+So streams, the scheduler will try to first execute tasks
+
+07:22
+from the higher priority stream.
+
+07:23
+And in this example...
+
+07:25
+The second kernel, it's deliberately launched with
+
+07:29
+some delay after the first kernel, and it's launched
+
+07:32
+at a high-priority stream.
+
+07:34
+And you can see that the high-priority kernel CTA
+
+07:39
+is executed basically as soon as possible.
+
+07:43
+So what happens here...
+
+07:48
+As CTAs that already started from the low priority stream finish,
+
+07:54
+the scheduler first executes high priority CTAs and only then
+
+08:00
+submits remaining CTAs from the low priority stream for execution.
+
+08:06
+So, upcoming inside systems will allow you to see the
+
+08:12
+stream priority by hovering your mouse over the stream.
+
+08:17
+This was not present in the previous versions
+
+08:20
+of inside systems.
+
+08:23
+Okay, now let's talk about synchronization.
+
+08:25
+So the heaviest synchronization is cudaDeviceSynchronize,
+
+08:29
+which basically blocks the CPU until all previously submitted
+
+08:34
+GPU work has finished.
+
+08:36
+In particular, as you can see here, it results in kernel
+
+08:41
+launch latency gaps, which we usually try to hide by launching in
+
+08:45
+advance, as shown on the left here.
+
+08:49
+So, one common mispractice, so to speak, is to use
+
+08:53
+CUdeDeviceSynchronize just to check for kernel
+
+08:59
+runtime errors or to do the timing.
+
+09:04
+So, let's first talk about error checking.
+
+09:09
+There are two types, essentially two types of kernel errors.
+
+09:12
+Launch errors due to their own launch configuration and
+
+09:15
+execution errors.
+
+09:17
+So when we launched with triple-chevron, there is no
+
+09:20
+return code, and launch errors can be checked using these two APIs.
+
+09:25
+Could I get last error, or could I pick last error?
+
+09:28
+One of them resets the error, the other one does not.
+
+09:32
+However, these functions do not report execution errors,
+
+09:36
+even when they are called after the kernel has failed during executing.
+
+09:42
+So execution errors are reported, for instance, by these three
+
+09:46
+functions, and they are sticky, so as soon as they're reported
+
+09:49
+once, they'll keep showing up, unlike cudaGetLastError.
+
+09:54
+And so here's the example.
+
+09:56
+Let's say we have a kernel, which is launched correctly, but
+
+10:01
+experiences some execution error.
+
+10:03
+And let's say we had some CPU work here, so when we
+
+10:08
+call cudaGetLastError, the kernel already failed.
+
+10:13
+Nonetheless, cudaGetLastError will not report any error,
+
+10:17
+but CUdeviceSynchronize will, and the error will be sticky, so if
+
+10:20
+you repeat CUdeviceSynchronize, you will be observing the same error.
+
+10:24
+On the other hand, if you
+
+10:27
+first call CUdeviceSynchronize,
+
+10:30
+It will report the error, and the error will get propagated,
+
+10:33
+so your cudaGetLastError will still show the error.
+
+10:37
+However, cudaGetLastError will reset it, and on the second
+
+10:40
+call, you will not see the error.
+
+10:43
+With respect to timing, which was another reason
+
+10:46
+why CUdeviceSynchronize is commonly misused, you
+
+10:52
+can either use Nsight Compute or Nsight Systems to time your
+
+10:57
+kernels, or you can use CUdevice, which I will describe later.
+
+11:04
+So note that CUdeviceSynchronize is not the only blocking call.
+
+11:08
+Some other APIs, such as cudaFreeShown here, behave
+
+11:11
+as if they are essentially surrounded by CUdeviceSynchronize.
+
+11:16
+You will see the same problems like gaps in your timeline.
+
+11:21
+Also, some other functions like cudaMemCopy may exhibit
+
+11:25
+that behavior, and this depends on a particular setting.
+
+11:29
+It can depend on hardware, depend on the copy direction,
+
+11:33
+whether it's pageable or pinned memory, and so on.
+
+11:38
+Other functions like cudaMemCopy, device-to-device, and cudaMemSet
+
+11:42
+exhibit default stream behavior in the sense that they are
+
+11:45
+not blocking, but they will behave synchronously with
+
+11:50
+respect to other streams, same way as the default stream behaves.
+
+11:57
+And also it's possible that there is no
+
+12:00
+synchronization on the GPU side.
+
+12:02
+So considering all those choices, the best way is to actually
+
+12:08
+use an inside system to verify if blocking, non-blocking,
+
+12:10
+and synchronous or asynchronous behavior of your APIs.
+
+12:17
+And our next tip is to use CUDA synchronization only
+
+12:21
+when necessary, and typically you want to use synchronization
+
+12:24
+when you have data dependencies.
+
+12:26
+Also, of course, don't use heavy synchronization, use stream
+
+12:31
+synchronization or even simpler stream event synchronization,
+
+12:38
+which I will describe later.
+
+12:41
+Also, as I said, avoid synchronous APIs, and CUDA provides
+
+12:46
+asynchronous versions of most of the API calls, such
+
+12:53
+as cudaMallocAsync, freasync, and stream allocators, and so on.
+
+12:59
+That take stream as an argument and follow stream semantics.
+
+13:05
+Nonetheless, some of these calls can be synchronous.
+
+13:08
+For example, cudaMemCopierSync with pageable host memory.
+
+13:13
+Another option that cuda provides is if you want
+
+13:16
+to run CPU code asynchronously, you can put it in a stream
+
+13:20
+using cudaLaunchHost function.
+
+13:23
+And I'll show an example of utilizing that function later.
+
+13:29
+So now let's talk about CUDA memcpy.
+
+13:31
+As I said, it can exhibit different behavior.
+
+13:37
+In particular, asynchronous version can behave
+
+13:39
+synchronously and vice versa.
+
+13:41
+Asynchronous versions can behave asynchronously.
+
+13:44
+Another problem is the CUDA memcpy or CUDA memcpyAsync
+
+13:47
+is if, let's say, you want to launch many small copies
+
+13:53
+one after another, the launch latency overheads will dominate.
+
+13:59
+They also do not provide the best performance for system-allocated
+
+14:04
+memory, which is memory allocated outside of CUDA APIs, even
+
+14:09
+on coherent systems such as Grace Hopper or Grace Blackwell.
+
+14:13
+So CUDA 12.8 introduced a new API, which is called
+
+14:17
+cudaMemCopyBatcherSync.
+
+14:20
+First of all, it allows you to put multiple copies into
+
+14:23
+a single API call.
+
+14:26
+So you're provided a list of destination pointers, a
+
+14:29
+list of source pointers.
+
+14:32
+Each copy in the batch can have its own size.
+
+14:34
+You're provided a list of sizes.
+
+14:36
+Finally, number of copies.
+
+14:40
+Some attributes.
+
+14:43
+Such as direction, hints, and so on.
+
+14:47
+And the rest are basically used for return-to-return errors.
+
+14:53
+So it can report which copies in the batch failed, and so on.
+
+15:01
+So one advantage of this function that, for instance, on Grace
+
+15:04
+Hopper, Grace Blackhole system, it will run concurrently even
+
+15:08
+with pageable memory.
+
+15:12
+Okay, now let's talk about stream synchronization.
+
+15:15
+So we provide this API call called cudaStreamSynchronize,
+
+15:22
+which blocks CPU only for a particular stream until
+
+15:27
+the tasks in the stream finish.
+
+15:30
+However, as you can see here, tasks in the other streams can
+
+15:35
+still be submitted and executed.
+
+15:39
+The problem, because it's blocking, we still, let's say,
+
+15:41
+we have kernel 3 here that we want to submit into a different stream.
+
+15:45
+It will still be delayed because of cudaStreamSynchronize
+
+15:51
+blocking behavior.
+
+15:53
+So another possibility is to use events, and events
+
+15:56
+eventually are like checkpoints in the GPU timeline.
+
+16:00
+So you can...
+
+16:02
+Record an event after submitting certain tasks into a stream,
+
+16:07
+and then you can wait for that event to synchronize.
+
+16:10
+So it essentially splits CUDA stream synchronizing
+
+16:14
+to arrive-wait pattern, where arrive is non-blocking
+
+16:18
+and you only wait when you have to.
+
+16:22
+Also, events provide you timing capabilities, so you can measure
+
+16:28
+time between event completions.
+
+16:32
+Which is a better option than timing using heavy
+
+16:35
+synchronization of your kernels.
+
+16:39
+So as I said, synchronization is typically required due
+
+16:42
+to data dependency.
+
+16:44
+One common case is when a task, say, kernel in one stream produces
+
+16:48
+data that is later consumed by a task in another stream.
+
+16:52
+Or you may want to protect from producing data if another
+
+16:57
+stream is still consuming all data.
+
+16:59
+And for that, we have stream synchronization.
+
+17:02
+So you can...
+
+17:04
+Record event in one stream and make another stream to
+
+17:07
+wait on that event.
+
+17:09
+And this synchronization is nice because it does not involve CPU.
+
+17:12
+So as you see here, we have synchronization going on between
+
+17:16
+stream 1 and 2, but that does not prevent CPU from submitting kernel
+
+17:22
+3 and executing it right away.
+
+17:27
+Another thing, this is a pretty...
+
+17:31
+This function has...
+
+17:33
+A lot of capabilities, in particular, you can
+
+17:35
+synchronize streams that live on different devices.
+
+17:39
+Okay, now I want to show one particular example.
+
+17:42
+So this comes from a wavelet transform code.
+
+17:46
+And so basically the setup is the following.
+
+17:49
+We have input array on the CPU.
+
+17:53
+And we need to produce output which consists of multiple columns, and
+
+17:56
+each column is computed completely independently from other columns.
+
+18:01
+So typically, array sizes here are huge, even for a single column.
+
+18:06
+Do the computation in a loop over columns.
+
+18:10
+So first we copy our input to GPU, then we start computing
+
+18:15
+column 1, copying it back to CPU, compute column 2,
+
+18:19
+copy it back to CPU, and we do it in a loop over the columns.
+
+18:24
+So our goal here is to overlap compute and copy, as shown here.
+
+18:31
+And to do so, if you're riding on X86 system, we need to introduce
+
+18:35
+pinned buffer in order to allow for cudaMallocCopy to run concurrently.
+
+18:43
+So we split step three into two.
+
+18:46
+Since we are going to overlap copy and compute, we don't want one
+
+18:50
+of them to step onto each other.
+
+18:51
+So we basically need to double our buffers.
+
+18:56
+So at even iteration, we compute even column and use even buffers,
+
+19:01
+buffer number zero.
+
+19:02
+At odd iteration, we use buffer number one.
+
+19:07
+So first I'm going to show the result of the code that
+
+19:10
+we are going to write.
+
+19:11
+So as you can see, it's perfectly concurrent.
+
+19:16
+It's almost full balance between copy and kernel execution.
+
+19:24
+It takes slightly longer to actually copy data back to CPU.
+
+19:27
+And here you can see how data...
+
+19:33
+Travels for a single column, so at one time slice it's
+
+19:37
+computed, it is computed, then it's copied during the
+
+19:40
+next time slice, while next column starts being computed, and next
+
+19:46
+time slice we have a copy from pin memory back to the output array,
+
+19:53
+while we start computing third column and copying second column.
+
+19:57
+So this third task of copying from the pin memory to the
+
+20:04
+output memory, it's a pure CPU task, and typically, if we want
+
+20:08
+to implement it asynchronously, we have to spawn another CPU
+
+20:12
+thread and have rather cumbersome code to do the synchronization.
+
+20:18
+And I'm going to show how to simplify it by using cudaLaunchHost
+
+20:22
+function that allows to launch CPU code into a stream.
+
+20:29
+So first, let's see what we need to do.
+
+20:31
+So we have three streams, streamCompute, where we execute
+
+20:35
+our kernels, streamDeviceToHost, where we copy from device
+
+20:40
+to pinned host memory, and streamHostToHost, where we copy
+
+20:44
+from pinned memory to final output.
+
+20:47
+And you can see that here we do, we pinpoint even an odd column.
+
+20:55
+So here's the kind of the base of our algorithm.
+
+21:00
+We run a kernel in the stream compute.
+
+21:03
+We do copy from device to pin memory using async-on-async copy,
+
+21:10
+and then we end another stream.
+
+21:12
+And then finally we copy from pin memory to the output buffer
+
+21:17
+using third stream.
+
+21:19
+So let's take a look at this function.
+
+21:23
+cudaLaunchHost function, it just takes a function that
+
+21:26
+can take only one pointer.
+
+21:28
+So we create a structure that holds a copy of pinMemoryArray
+
+21:32
+and also a columnIndex, which we initialize to zero.
+
+21:37
+So here we run a standard map copy, and then we increase
+
+21:41
+columnIndex here, so it matches the columnIndex of the loop here.
+
+21:46
+Now let's talk about synchronization.
+
+21:48
+So let's take a look at the stream compute.
+
+21:52
+So what we need to make sure is that while it's writing data to the
+
+21:59
+output buffer, it doesn't step on the previous device-to-host copy,
+
+22:07
+which actually, which as you can see See how it operates on there.
+
+22:18
+Operates on a column minus two because we do pinpoint.
+
+22:24
+For the stream device to host, we need to make sure that
+
+22:27
+we read computed data after stream compute finished computation,
+
+22:32
+so we need to synchronize here.
+
+22:33
+And we also need to make sure that it doesn't step on next
+
+22:37
+stream reading previous iteration.
+
+22:40
+And finally, for the last stream, we need to make sure
+
+22:43
+that we read after previous stream finished the write.
+
+22:47
+So, each stream, after it runs the tasks, it records an event,
+
+22:55
+and as you saw previously, we have the following synchronization.
+
+22:59
+So, we have one synchronization before running the kernel,
+
+23:04
+then, as you saw here, we have double synchronization
+
+23:08
+for our second stream.
+
+23:14
+And finally, we have last synchronization
+
+23:16
+for our third stream.
+
+23:18
+And after the loop, we finish with a host-to-host synchronization
+
+23:21
+because that's the last task
+
+23:24
+that will basically ensure that the entire computation has finished.
+
+23:29
+Okay, so let me summarize the tips.
+
+23:33
+First of all, avoid heavy synchronization.
+
+23:36
+Create streams with non-blocking flags so they don't interact
+
+23:40
+with the default stream.
+
+23:43
+Use async API calls, in particular use new API cudaMemCopyBatchAsync.
+
+23:49
+Another thing that I did not mention, if you don't need
+
+23:52
+to time your events, create events with disabled time
+
+23:55
+and flag because it makes them slightly more performant.
+
+23:59
+And also be aware of the following environment variables.
+
+24:02
+There are variables that actually control the number of streams
+
+24:05
+that can execute concurrently.
+
+24:07
+So this is device max connections.
+
+24:09
+And also with respect to concurrent copy, there is
+
+24:14
+max copy connections.
+
+24:16
+Often, because you want to avoid gaps when you launch
+
+24:20
+your kernels, you may want to increase the launch queue
+
+24:24
+size before the queue overfills, so it can be controlled with
+
+24:28
+the following environment variable.
+
+24:33
+Okay, this finishes the stream part, and now I'll let Mir to talk.
+
+25:19
+Okay, let's see how this works.
+
+25:22
+So we'll now talk about programmatic dependent launch.
+
+25:28
+Assume you have three kernels all launched on the same CUDA stream,
+
+25:31
+and this is their GPU timeline.
+
+25:34
+And these kernels will execute sequentially.
+
+25:36
+This is guaranteed by single-stream semantics.
+
+25:39
+And for kernels running on the same stream, sequentially,
+
+25:45
+sorry, let me turn off that.
+
+25:47
+For kernels executing on the same CUDA stream, data dependencies
+
+25:50
+are usually implied.
+
+25:52
+So assume that the primary kernel will produce some data that the
+
+25:55
+secondary kernel will then consume.
+
+25:57
+And if we were to zoom in the execution of the secondary
+
+25:59
+kernel, we would usually see that most of its execution
+
+26:04
+time is spent processing data that was produced by the primary kernel.
+
+26:09
+But there is usually a short preamble in these kernels
+
+26:11
+that has no data dependence with the primary kernel work.
+
+26:15
+So this could be, for example, shared memory initialization,
+
+26:18
+pointer arithmetic, some initial setup work, or even
+
+26:21
+read-only data that's not modified anywhere in your program.
+
+26:26
+Now, the secondary kernel can also act as a producer itself for the
+
+26:30
+subsequent kernel, and if we zoom into the last kernel, we'll likely
+
+26:34
+see a similar preamble pattern.
+
+26:38
+Programmatic dependent launch, PDL for short, leverages this preamble
+
+26:43
+pattern to allow opportunistic overlap of the preamble of
+
+26:47
+the secondary kernel, the consumer kernel, with the producer kernel.
+
+26:51
+So if you have a scenario with PDL, a possible GPU timeline would
+
+26:56
+look like this, where you would have an overlap between each pair
+
+27:01
+of producer and consumer kernel.
+
+27:04
+And the exact overlap, of course, will depend on various factors.
+
+27:08
+Now, programmatically speaking, if using PDL with CUDA streams,
+
+27:12
+you need to indicate in the code of the primary kernel when
+
+27:15
+the secondary can be triggered.
+
+27:17
+This is possible using the CUDA trigger programmatic
+
+27:20
+launch completion API.
+
+27:22
+And you need to specify from the secondary kernel the point
+
+27:26
+at which the kernel should block, the thread should block,
+
+27:29
+and wait for the primary kernel to complete in its entirety.
+
+27:33
+This is possible using the CUDA grid dependency synchronize API.
+
+27:38
+These are both device-side APIs that are available from
+
+27:41
+ComputeCapability 9 and on, so from Hopper and on.
+
+27:45
+Note that if you use PDL, the secondary kernel has to be launched
+
+27:49
+using the cudaLaunchKernelEx API, so you cannot launch it using
+
+27:53
+the usual triple chevron notation.
+
+27:56
+And it's important to note that in order to get that overlap, you need
+
+27:59
+to make sure there's no GPU work on that same stream between the
+
+28:02
+primary and the secondary kernel.
+
+28:04
+And that means you cannot, for example, even record an
+
+28:06
+event between the two kernels on the same stream.
+
+28:10
+Now let's look at how you can launch the kernels
+
+28:12
+from the CPU side.
+
+28:14
+Assume these are the two signatures of my kernels, you probably
+
+28:17
+have more arguments.
+
+28:19
+Now, the primary kernel you can launch as usual with a
+
+28:21
+triple-chevron notation.
+
+28:22
+But for the secondary kernel, you need to use the new
+
+28:24
+API, not the new, excuse me, the cudaLaunchKernelX
+
+28:28
+API that we discussed.
+
+28:29
+And you need to specify cudaLaunchConfiguration,
+
+28:32
+you need to specify the name of the kernel, of course,
+
+28:35
+and its arguments, if any.
+
+28:37
+Now, in terms of the CUDA launch configuration, you need
+
+28:40
+to specify the usual parameters, for example, grid dimension,
+
+28:43
+dynamic shared memory, et cetera.
+
+28:46
+And you also, of course, need to specify the stream
+
+28:48
+you will execute on.
+
+28:49
+This has to be the same stream as the primary kernel.
+
+28:54
+If you put a different stream there, you're not going to
+
+28:56
+get an error, but you're not going to get a PDL overlap.
+
+29:00
+And you also need to specify a special attribute for PDL,
+
+29:05
+which is both the identifier listed here and the value.
+
+29:10
+Let's now look at how you can
+
+29:15
+launch kernel from the, let's look at the code from the device side.
+
+29:19
+Assume your code looks like that, and I've abstracted
+
+29:22
+away work before and after the CUDA programmatic launch
+
+29:25
+completion into work A and work B.
+
+29:27
+The secondary kernel can be scheduled when every non-exited
+
+29:31
+thread block of the primary has called
+
+29:34
+cudaTriggerProgrammaticLaunchCompletion at least once.
+
+29:38
+That means you need only one thread per thread block to call that API.
+
+29:42
+If no thread in a non-exited thread block calls that API,
+
+29:47
+the secondary kernel then can be scheduled when all
+
+29:52
+CTAs, when all warps from the primary have completed their work.
+
+29:58
+Note that CUDA trigger programmatic launch completion in itself
+
+30:01
+does not provide any memory visibility guarantees, so
+
+30:04
+it's important that you take care of that in the secondary
+
+30:07
+kernel, which is why we have the CUDA grid dependency synchronize.
+
+30:11
+So the CUDA grid dependency synchronize is the point at
+
+30:13
+which a thread will block and wait for the primary kernel to complete
+
+30:18
+in its entirety, including work B.
+
+30:23
+And where you place that API in your code is very important, right?
+
+30:26
+It should be in such a location where it should be safe for
+
+30:30
+work C to execute in parallel with work B. And work C should
+
+30:35
+have no data dependence with any of the primary kernel's work.
+
+30:39
+So, for example, it should not access data that's modified
+
+30:42
+by work A or work B. It should not modify data that's accessed
+
+30:46
+by work A or work B. But reading grid-only data that's not modified
+
+30:50
+anywhere in your program is fine.
+
+30:53
+And typically, as we said, work C would be, you know,
+
+30:55
+short memory initialization, local computations, et cetera.
+
+31:00
+And it is work D, which is the work that will typically have,
+
+31:03
+you know, requirement for data that was produced by the primary kernel.
+
+31:10
+Now you may be wondering, are there any performance
+
+31:12
+considerations with the location of the trigger API, right?
+
+31:16
+What happens if I put it too early in my code?
+
+31:18
+So one way to think about it is the following.
+
+31:21
+So let's say if your duration of work B is significantly
+
+31:26
+longer than the duration of work C, you may end up in
+
+31:29
+a situation where there are threads waiting at the cuda grid dependency
+
+31:33
+synchronize for the primary kernel to complete for a long time.
+
+31:38
+And this might be relevant or even problematic for your
+
+31:40
+case if there are kernels in other streams that could
+
+31:43
+have benefited from the resources, right, that these threads may
+
+31:46
+be occupying, these thread blocks.
+
+31:50
+Now, as we mentioned earlier, the cudaGridDependencySynchronize
+
+31:53
+position is also very important.
+
+31:55
+What happens if you accidentally put it in such a place where
+
+32:00
+work C incorrectly accesses data that was modified by work B?
+
+32:05
+And I should say here that in this code, I'm assuming, right,
+
+32:08
+you don't have any divergence, so everything executes the same.
+
+32:11
+So if you do that, this is kind of incorrect behavior, period.
+
+32:15
+It's a possible race condition, and this is not something
+
+32:17
+the tools can capture, right?
+
+32:18
+So it's important to avoid that.
+
+32:20
+One general way to think about it is you can think of placing the
+
+32:25
+CUDA grid dependency synchronized in the secondary kernel before
+
+32:28
+any global memory access.
+
+32:30
+Sure, there's the exception I mentioned that it's fine
+
+32:31
+to access read-only data, but this is fine, right?
+
+32:35
+For the general case, you can just put it before any global memory
+
+32:38
+access to be on the safe side.
+
+32:40
+And now what if work B and C are empty?
+
+32:42
+Okay, then naturally the amount of overlap you will get will
+
+32:46
+be limited, you don't get actual kernel overlap, right?
+
+32:50
+But you could still use them, right?
+
+32:54
+Because you can hide some small gaps between the
+
+32:55
+kernels themselves.
+
+32:57
+And finally, because, oh, excuse me.
+
+33:00
+And finally, because these APIs are available from SM90
+
+33:04
+and on, you may need to guard them in your code, right, so
+
+33:07
+you don't have compilation errors.
+
+33:10
+Now, we mentioned that the secondary kernel can also
+
+33:12
+act as a producer of data itself, so in that case, it makes generally
+
+33:17
+more sense to have first the cudaGridDependencySynchronize with
+
+33:21
+the primary kernel, and then at a later point, do the programmatic
+
+33:25
+launch completion, right, to trigger the subsequent kernel.
+
+33:29
+Now, let's look at an inside system trace, so assume I don't
+
+33:31
+have PDL, then this three kernel is the timeline, right, their GPU
+
+33:35
+execution will be sequential one after the other, potentially small
+
+33:38
+tiny gaps between the kernels.
+
+33:40
+Now, what if I have PDL, and I assume I called it the correct
+
+33:44
+way, so all thread blocks from the primary kernel trigger it.
+
+33:49
+So you will have a situation like this where you have overlap
+
+33:52
+between the primary and the secondary, and also between
+
+33:54
+the secondary and the last kernel.
+
+33:57
+The exact amount of overlap you will have will naturally
+
+33:59
+depend on your code and various other factors.
+
+34:06
+It will be application specific.
+
+34:08
+Here I was just using some delay code to make it more
+
+34:11
+obvious to see how PDL works.
+
+34:14
+It's important to note that if your primary kernel was
+
+34:16
+a multi-wave kernel, the secondary kernel will be triggered once.
+
+34:21
+The thread blocks from the last wave, all of them have
+
+34:24
+called the trigger API.
+
+34:27
+Now, what happens if you call PDL in a way where no thread
+
+34:31
+block actually calls it, right?
+
+34:32
+So let's say you have a mistake in your code.
+
+34:34
+So in this case, you will have a timeline like this.
+
+34:37
+The secondary, you'll still have the overlap between the
+
+34:40
+second and the last.
+
+34:41
+But if no thread block in the primary calls it, then
+
+34:44
+the secondary kernel will be implicitly triggered when
+
+34:48
+all the warps of the first kernel complete their execution.
+
+34:51
+So you get this tiny, probably a couple nanoseconds, 100
+
+34:53
+nanoseconds range in Nsight system overlap, right, between them,
+
+34:57
+but not something more than that.
+
+35:01
+And so here I have some reference for you for further reading,
+
+35:04
+and we'll later, after, upload also that code on a GitHub
+
+35:09
+at the link provided.
+
+35:11
+Now we are going to talk about CUDA graphs.
+
+35:16
+Which is a work submission model, right?
+
+35:19
+And the graph is a way to express both operations and
+
+35:22
+dependencies between operations.
+
+35:24
+So an operation can be a kernel, a memory copy, a child graph,
+
+35:28
+a conditional node, and many other options you have in CUDA.
+
+35:32
+And in the schematic we show on the slide here, you have
+
+35:36
+five nodes, and let's assume for convenience that these are kernels.
+
+35:40
+Now, the dependencies are edges between the nodes, and they specify
+
+35:45
+the order in which operations should execute or may execute.
+
+35:49
+So, for example, A, B, D, and E will be guaranteed to
+
+35:53
+execute sequentially, right?
+
+35:55
+Same for A, C, D, and E. They will execute sequentially in order.
+
+35:59
+But what about B and C, right?
+
+36:01
+These are both nodes that are children of A, right?
+
+36:05
+And so B and C may execute in parallel.
+
+36:09
+Or they may execute in any sequence, right?
+
+36:11
+There's no guarantee for that.
+
+36:13
+The guarantee is that they will both execute after A has
+
+36:15
+completed and before D has started.
+
+36:20
+Now, using a CUDA graph as a work submission model has, instead
+
+36:24
+of the traditional CUDA streams approach, has multiple benefits.
+
+36:27
+So, first of all, you get reduced CPU launch submission overhead
+
+36:31
+when launching a graph, right?
+
+36:33
+Especially if you relaunch the same graph multiple times.
+
+36:36
+Because instead of submitting every operation separately, you
+
+36:39
+encapsulate everything into a graph and you submit it once on the GPU.
+
+36:44
+This also allows for more optimizations to happen under
+
+36:47
+the hood by CUDA, right, because it doesn't get knowledge of every
+
+36:51
+operation one at a time, but it gets the whole graph all at once.
+
+36:55
+And last but not least, using CUDA graphs can enable other
+
+36:59
+optimizations, such as conditional execution, a situation where
+
+37:04
+your condition changes at runtime, and I'll give you
+
+37:06
+an example about that a bit later.
+
+37:09
+Now, assume we have the operation shown in the schematic here.
+
+37:12
+If you were to use, to express that, using the traditional
+
+37:15
+cudaStreams mechanism, the CPU timeline would look like this.
+
+37:18
+And I'm assuming this is the second time I've launched this
+
+37:22
+sequence of operations, well, this collection of operations, rather.
+
+37:25
+So the blue boxes here are kernel launches, right?
+
+37:28
+And the green boxes are API, CUDA API calls that are involving
+
+37:33
+event synchronization.
+
+37:35
+Now, if I were to launch the same, the entire same graph,
+
+37:41
+right, as an actual graph, the set of operations, I can just use
+
+37:45
+the CUDA Graph Launch API, right?
+
+37:48
+And this will launch the work encapsulated into the CUDA Graph,
+
+37:51
+right, and the two are equivalent.
+
+37:53
+And as you can see, we've saved quite a lot of time
+
+37:55
+from the CPU side.
+
+37:57
+And having the CPU be ahead of your GPU is beneficial
+
+38:00
+because you can avoid GPU timeline gaps and your CPU
+
+38:04
+is not longer in the critical path.
+
+38:06
+And usually this is overhead that is more pronounced if
+
+38:09
+you have short kernels.
+
+38:12
+Now, this is a reference slide showing how you could express,
+
+38:15
+right, using CUDA streams, this schematic, right?
+
+38:20
+So we assume A, B, D, E are launched on stream one, C,
+
+38:24
+kernel C will be launched on stream two, and we have
+
+38:27
+events to express the edges, right, between A and C and C and D.
+
+38:33
+So let's look at what happens on the GPU side, right?
+
+38:36
+So the GPU timeline, you see the work running in streams,
+
+38:40
+right, we have all the kernels, and here B and C actually
+
+38:43
+do overlap their execution.
+
+38:45
+But in graphs mode, the Nsight system profiler will by default
+
+38:49
+trace the graph as a whole, which is why you see that orange box.
+
+38:53
+But if you were to trace it in node mode, you will see that it's
+
+38:56
+actually the same kernels, right?
+
+38:57
+This is equivalent execution.
+
+38:59
+And using graphs, the operations are more tightly packed, and
+
+39:02
+so you can get also performance benefit on the GPU side as well.
+
+39:08
+Now, there are three key steps involved in
+
+39:10
+CUDA graphs, definition, instantiation, and launch.
+
+39:13
+So first of all, you need to define your graph, right?
+
+39:15
+You need to express operations and dependencies into a
+
+39:18
+CUDA graph object.
+
+39:19
+And there are two ways to do that, which is stream capture
+
+39:22
+and graph APIs, and I'll walk you through both in a bit.
+
+39:26
+Assuming you have done that, the next step is
+
+39:28
+to instantiate your graph.
+
+39:29
+This generates the executable graph using the CUDA
+
+39:32
+Graph Instantiate API.
+
+39:35
+And now that you have your executable graph, you can
+
+39:37
+launch it on a CUDA stream using the CUDA Graph Launch API.
+
+39:43
+It's important to note that the stream you launch the
+
+39:45
+graph on doesn't tell you anything.
+
+39:47
+It's simply for dependency tracking.
+
+39:49
+So it doesn't tell you anything about where the various
+
+39:53
+nodes of your graph will execute under the hood.
+
+39:55
+But what it tells you is that if you launch a kernel on
+
+39:58
+that same stream after your graph, that kernel will execute
+
+40:02
+only after the whole graph has completed its execution.
+
+40:06
+And you can optionally also choose to upload the graph to the stream
+
+40:09
+before actually launching it.
+
+40:12
+Now, the idea is that once you have your graph, you can
+
+40:14
+relaunch it multiple times.
+
+40:15
+Let's say you have a signal processing pipeline, right?
+
+40:18
+And you execute the same graph over and over again on different data.
+
+40:23
+Now, if your data changes, you may need to ask yourself
+
+40:26
+some questions about whether you need to update your graph.
+
+40:29
+Right, so if your kernel parameters change, you may need to update
+
+40:31
+your node parameters.
+
+40:33
+If, let's say, for a specific type of data, some kernel
+
+40:35
+node should execute, and you know that in advance from
+
+40:38
+the CPU, you can disable those nodes in advance, etc.
+
+40:43
+Or if you have more widespread change, you need to re-instantiate
+
+40:46
+in the different graph.
+
+40:47
+And at the very end, you'd need to destroy your graphs.
+
+40:51
+Now let's talk about graph creation.
+
+40:54
+When it comes to graph creation, the easiest way, especially
+
+40:56
+if you have your code already written, is to use stream capture.
+
+41:00
+So assuming this was the code that I've shown you before,
+
+41:02
+right, that describes the schematic to the left, all you need to do
+
+41:07
+is declare your CudaGraph object.
+
+41:09
+Call cudaStreamBeginCapture on stream one.
+
+41:11
+This is the first stream where we have work executing on,
+
+41:15
+right, and then at the very end of the snippet, without
+
+41:18
+any synchronization, you just call cudaStreamEndCapture
+
+41:22
+on that same stream.
+
+41:23
+Now, all the work enclosed between beginning and capture
+
+41:26
+doesn't actually execute on the GPU at this point, right?
+
+41:30
+It is simply encapsulated into the graph, right?
+
+41:33
+This will then execute after you instantiate and you
+
+41:35
+launch the graph.
+
+41:36
+This is the point where it will execute on the GPU.
+
+41:40
+Note that stream one is called the capturing stream.
+
+41:43
+This is the same stream we end the capture on.
+
+41:45
+And you may be wondering, okay, is work of stream two also captured?
+
+41:49
+And in this case, it is captured because the stream one has this
+
+41:52
+kind of fork and join dependence with stream, so stream two
+
+41:56
+has this fork and join dependence with stream one via event.
+
+41:59
+If you didn't have that dependence, and assuming you did your
+
+42:02
+error checking, you get a message saying something is wrong,
+
+42:05
+an error return saying something is wrong with your capture.
+
+42:10
+And on topic of error checking, as was already mentioned,
+
+42:12
+it's very important to not skip, could I get last error after
+
+42:15
+your triple-severant launches?
+
+42:16
+Because if I had an invalid argument, similar to what
+
+42:19
+Igor described before, you will actually get missing
+
+42:24
+nodes in your graph, right?
+
+42:26
+And just to note, we are skipping error checking code in the
+
+42:29
+slides for brevity, but it's kind of expected that you
+
+42:31
+add it when you code.
+
+42:34
+So we've seen how you can create a graph using stream capture.
+
+42:38
+Now let's look at how you can create a graph using the
+
+42:41
+graph APIs, all right?
+
+42:43
+The same graph.
+
+42:44
+So the first step is you declare your graph object
+
+42:46
+and call cudaGraphCreate.
+
+42:47
+At this point, your graph is empty, it has nothing in it.
+
+42:50
+Then I need to declare my cudaGraphNodes, I have
+
+42:54
+five in this example.
+
+42:55
+And then I need to start and create the nodes.
+
+42:57
+Because these are kernel, I mentioned here, I can call
+
+43:00
+the cudaGraphAtKernelNodeAPI.
+
+43:03
+And this will specify that I'm going to add node A, the
+
+43:06
+graph I'm going to add it to.
+
+43:08
+And I need to specify the dependencies this
+
+43:10
+graph node may have.
+
+43:12
+So because this is the root of my tree, it doesn't have
+
+43:15
+any dependencies.
+
+43:16
+And so I can put zero here.
+
+43:18
+And there's no list of nodes this depends on, so I can
+
+43:21
+put a null pointer here.
+
+43:23
+And because this is a kernel node, I need to specify my
+
+43:25
+parameters, right?
+
+43:26
+The usual launch, like grid dimension, dynamic shared
+
+43:29
+memory, et cetera.
+
+43:31
+Now, we continue this process.
+
+43:33
+We add node B to the graph, right?
+
+43:35
+Node B depends on node A. So, note that here I need to specify that
+
+43:40
+it has one dependence, and I point right to the node it depends on.
+
+43:46
+And we continue this process.
+
+43:48
+Note that node D has dependent two nodes, right?
+
+43:51
+B and C, and so we have, we push them into a vector, and
+
+43:55
+then we specify them when we do the CUDA Graph at Kernel node API.
+
+44:00
+And we finally add the node E, and this is the alternative
+
+44:03
+way of creating a graph.
+
+44:08
+Now, you may be wondering, okay, how do I decide which
+
+44:10
+method to use, right?
+
+44:12
+And the answer is it depends, and there are tradeoffs to consider.
+
+44:16
+So when it comes to stream capture, you know, if you
+
+44:18
+have your code ready, this is likely the fastest way, right?
+
+44:20
+You add three lines, and then you have the graph assuming
+
+44:24
+all the work is capturable.
+
+44:26
+Also using string capture is the way to capture library
+
+44:30
+calls into a graph.
+
+44:31
+So you have a library call that takes a stream.
+
+44:33
+You can do beginCapture and capture after that, right?
+
+44:36
+And then you have captured all the work into a graph,
+
+44:40
+which you can actually add as a node to your graph later
+
+44:44
+using the graph API as well.
+
+44:47
+So do a combination of the two.
+
+44:49
+But it's important to note that not all work is capturable, so in
+
+44:52
+your code, if you have synchronous calls, you may need to transform
+
+44:56
+them right into a synchronous call, or if there's some CPU
+
+44:59
+code that you need to execute, you may need to update and use the
+
+45:02
+cudaLaunchHost function, et cetera.
+
+45:04
+And if you do stream capture, you don't really have, it's
+
+45:07
+more difficult to update node parameters, right, because
+
+45:10
+you need to get to the node that you want to update.
+
+45:13
+Now, with the graph APIs, it's much, much easier to
+
+45:16
+express dependencies, right, the way we've seen.
+
+45:18
+You don't actually need to create the streams or
+
+45:20
+manage the dependencies, right, manually with the events.
+
+45:23
+You just express them the way we did.
+
+45:27
+And it's much easier to explore different topologies
+
+45:30
+and also disable, enable nodes because you have access
+
+45:33
+to the actual graph nodes.
+
+45:37
+But you may actually need to have a separate code path,
+
+45:40
+right, if you need to have both streams and graphs.
+
+45:43
+Now a couple tips, this is far from a complete list, graphs is a very
+
+45:47
+big topic, so I find it's helpful to use cudaGraphDebug.print to
+
+45:50
+visualize a graph that generates a dot file that you can then convert
+
+45:54
+into a PDF and then you can see your graph and have like a sanity
+
+45:57
+check that this is how it is.
+
+45:58
+So I'm showing here the graph for our example and I used
+
+46:01
+zero for flags but you can use more verbose flags to
+
+46:04
+get a bit more information.
+
+46:07
+CudaGraphGetNodes is another very helpful call where you
+
+46:10
+can get either the number of the nodes in your graph
+
+46:13
+or the list of nodes in the graph.
+
+46:14
+And again, it's helpful to confirm that your graph looks
+
+46:17
+like as you'd expect.
+
+46:18
+And there are some other APIs to update node parameters or
+
+46:22
+enable and disable graphs, nodes.
+
+46:28
+If possible, it's best to create and instantiate your
+
+46:31
+graph outside your critical path and only do graph launches
+
+46:34
+and updates in your critical path.
+
+46:40
+So we mentioned before that one of the benefits of using
+
+46:43
+CUDA graphs is that they can enable conditional execution.
+
+46:47
+So often we have cases where processing depends on a runtime
+
+46:51
+condition that becomes known, or rather is computed, after you've
+
+46:54
+done some processing on the GPU.
+
+46:57
+For example, let's say we do some initial data processing,
+
+47:00
+and then based on a condition A, we determine which algorithm
+
+47:03
+we are going to launch on the GPU or exit if our data was invalid.
+
+47:08
+And then maybe depending on an additional condition, we
+
+47:11
+evaluate whether we need to do some additional processing
+
+47:14
+or if we can stop early.
+
+47:15
+So let's say if we've converged, there's no
+
+47:17
+need to do extra work, right?
+
+47:18
+We can exit.
+
+47:20
+And, or maybe if our code is taking a very long time,
+
+47:23
+we don't have enough time, right, to do more work.
+
+47:26
+So, I hope you're already thinking about your own use
+
+47:29
+cases at this point.
+
+47:31
+Let's see how this would work.
+
+47:32
+So, I'm going to give you an example timeline.
+
+47:34
+Time is the x-axis.
+
+47:35
+CPU timeline on the bottom, GPU at the top.
+
+47:38
+So I'm going to launch the graph, some initial data processing,
+
+47:42
+excuse me, not graph, launch some initial data processing.
+
+47:46
+And you can assume the green boxes here are, let's say,
+
+47:49
+kernels, and different rows are different streams, and
+
+47:51
+there are data dependencies that are implied between them, right?
+
+47:55
+And this duration may be longer than what's shown on the screen.
+
+47:59
+And then, eventually, you go back to the CPU, evaluate the condition
+
+48:02
+A, and then determine that, oh, I should launch algorithm one.
+
+48:05
+And then, again, go back to the CPU and determine, oh,
+
+48:07
+based on condition B, I need to launch some additional processing.
+
+48:11
+There are a couple things that are problematic here,
+
+48:12
+so let's look at them.
+
+48:14
+So, first of all, you pass control back to the CPU, right?
+
+48:17
+Which means there is some work in your processing where you copy data
+
+48:20
+from device to host, or you have a kernel write in host pin memory.
+
+48:25
+And then, um...
+
+48:27
+The CPU work becomes part of your critical path.
+
+48:31
+Also, the CPU needs to wait for the GPU work to complete
+
+48:34
+using some synchronization or polling mechanism, and so it can't
+
+48:38
+do anything else at that point.
+
+48:40
+And then you can also have gaps between the different
+
+48:43
+parts of your GPU execution.
+
+48:46
+So what would be really nice is if we had a way to not
+
+48:51
+do that, and let's say, evaluate the condition on the GPU.
+
+48:56
+So I'm going to focus on the second part of the timeline for
+
+48:59
+brevity, and let's see how we can evaluate the condition on the GPU.
+
+49:03
+So one approach would be to say, okay, I'm going to launch
+
+49:05
+my algorithm one as before, and then I'm going to launch
+
+49:09
+that extra work unconditionally, even though I don't yet know
+
+49:16
+how well condition B will evaluate.
+
+49:19
+Now, of course, for this to be functionally correct, I
+
+49:21
+need to do some extra work on the GPU side, right?
+
+49:24
+So you will have, you would need to go and modify potentially
+
+49:28
+every kernel, right, in that extra processing, have an extra preamble
+
+49:32
+that evaluates that condition.
+
+49:33
+If that condition is true, then, you know, that's fine.
+
+49:36
+You execute the remaining part of your kernel.
+
+49:39
+Or if that condition is false, then you don't execute anything,
+
+49:42
+but you still need to execute that preamble part for every single
+
+49:45
+kernel, right, and modify it.
+
+49:46
+So clearly, that doesn't scale well.
+
+49:49
+And as you can imagine, what if I don't have just kernels?
+
+49:52
+What if I have a memcpy operation, right?
+
+49:54
+That doesn't work.
+
+49:55
+So what we would really like to do is to have an option to encapsulate
+
+49:59
+this runtime condition-dependent work, right, into a body graph
+
+50:03
+or a conditional node or a device launch graph, and don't have these
+
+50:07
+extra issues that we've just seen.
+
+50:10
+So let's see how we can do that.
+
+50:12
+So we evaluate again the condition A, and now we launch algorithm one
+
+50:17
+as a graph, as a CUDA graph, right?
+
+50:20
+And we go actually and modify this graph, of course, before
+
+50:22
+we launch it, so there is some extra, an extra node.
+
+50:26
+Or an extra kernel that evaluates that condition on the GPU
+
+50:31
+and determines if it should launch a device graph or if
+
+50:35
+it should execute the body graph of a conditional node
+
+50:38
+based on that value.
+
+50:40
+And so we encapsulate all that additional processing
+
+50:42
+into a separate graph if the condition is true.
+
+50:46
+And if the condition is false, we just do that extra single
+
+50:49
+evaluation, right, once, and then we don't launch any work.
+
+50:53
+So this, um...
+
+50:56
+It's how we can do conditional execution using CUDA graphs.
+
+51:01
+And let's look into how we can use conditional graph nodes now.
+
+51:07
+So assume you have this simple linear graph that has three
+
+51:10
+graph nodes, A, B, and C.
+
+51:15
+And let's assume A and C are kernels and B is
+
+51:18
+a conditional node.
+
+51:22
+A conditional node has a type, a condition associated with
+
+51:26
+it, and one or more body graphs associated with it.
+
+51:29
+So in terms of timeline, here's how it will execute.
+
+51:32
+First, kernel A will execute, then the conditional node
+
+51:36
+B will execute, which means the condition will be checked,
+
+51:39
+it will be evaluated, and based on the type of the node and the
+
+51:41
+value, the appropriate body graph, if any, will execute on the GPU.
+
+51:48
+And then kernel C will execute Only once the entire...
+
+51:54
+Applicable body graph, if any, has completed its execution.
+
+51:58
+So we currently have three types of nodes, if, while, and
+
+52:02
+suite, right, conditional nodes.
+
+52:04
+So here's how it works on the GPU side.
+
+52:07
+So for if, you evaluate the condition value.
+
+52:09
+If it's not zero, you execute the body graph.
+
+52:12
+And if it is zero, you fall through and go and execute
+
+52:14
+kernel C directly.
+
+52:16
+And with if node types, you can actually express as of
+
+52:20
+CUDA 12.8 also the if-else case.
+
+52:23
+You just need to specify an alternative body graph that is
+
+52:25
+executed if your condition is zero.
+
+52:28
+We also have while nodes.
+
+52:30
+And so here you evaluate, check the condition.
+
+52:33
+If it's not zero, you execute the body graph.
+
+52:35
+Look back, re-evaluate.
+
+52:37
+As long as it's not zero, you keep on executing that body graph.
+
+52:40
+And at some point, when condition becomes zero,
+
+52:43
+you fall through and...
+
+52:46
+Go back and continue executing kernel C. This is very
+
+52:49
+useful if you have an iterative solver, right?
+
+52:51
+And this is something, of course, that's very important,
+
+52:53
+is to make sure in your code that there's something that
+
+52:55
+changes that condition, right?
+
+52:57
+To avoid an infinite loop.
+
+52:59
+And as of 12.8, we also have switch statements.
+
+53:02
+These are, you have to specify as many body graphs as the
+
+53:05
+k statements in your switch statement, and the value will
+
+53:08
+be from range from zero to n minus one if you have the equivalent
+
+53:13
+of n k statements in your code.
+
+53:17
+Now, for conditional graph nodes, you need to control the condition.
+
+53:20
+This is accessed via cudaGraphConditionalHandle.
+
+53:24
+To create a handle, you need to call the
+
+53:25
+cudaGraphConditionalHandleCreate API.
+
+53:28
+You need to specify the graph this handle is associated with, and you
+
+53:31
+need to specify with some flags.
+
+53:33
+If this is, you put a flag of zero, this means there
+
+53:36
+is no default value for that condition, so initially it's
+
+53:40
+undefined, unless you go and explicitly set it on the device.
+
+53:44
+Or you can Specify cudaGraphCondaSignedDefault,
+
+53:47
+which then you can specify the default value as your
+
+53:50
+third argument and unsigned in.
+
+53:53
+That will be applied on each graph launch.
+
+53:58
+Now, to set the condition after handle creation on the
+
+54:02
+GPU, you need to call the cudaGraphSetConditional API.
+
+54:06
+So you specify the handle, and you specify the new
+
+54:08
+value that you have.
+
+54:10
+This is a device-side API, and it's important that you
+
+54:12
+only call it from a single thread to avoid race conditions.
+
+54:17
+Now let's see how we can create a conditional node, right?
+
+54:20
+So we have created the handle.
+
+54:22
+The next step is to create and add a conditional node to the graph.
+
+54:25
+So we specify the cudaGraphNode parameter, saying this is
+
+54:28
+a conditional type, and then we specify the various conditional
+
+54:32
+fields, the handle that we've already created, the type,
+
+54:36
+one of the three types I've just shown you, and then you
+
+54:38
+also need to specify the size, which is the number of body
+
+54:41
+graphs associated with that node.
+
+54:44
+Here, if I want an if node, I will have a single body graph.
+
+54:47
+And of course, you add that node, that conditional node to the graph.
+
+54:51
+Something you should also do is populate that body graph, right?
+
+54:55
+What should execute once your condition has the
+
+54:58
+appropriate value?
+
+54:59
+You have access to these body graphs using the
+
+55:02
+phgraphout array, right?
+
+55:05
+And so I can be from zero all the way to size minus one.
+
+55:10
+So here I'm just adding the root node to that body graph.
+
+55:15
+And finally, of course, you need to ensure that condition
+
+55:18
+is populated by your on thread in some upstream kernel.
+
+55:25
+So we've seen how you can use cudaGraphConditional nodes.
+
+55:29
+You can also use device graphs to have that conditional execution.
+
+55:32
+It's a very long topic, and we don't have enough
+
+55:34
+time to go over that.
+
+55:36
+I just want you to be aware that device graphs exist.
+
+55:38
+These are graphs that can be launched from the device.
+
+55:41
+Actually, they can be launched from a kernel within another graph.
+
+55:44
+And this means that you can actually conditionally launch
+
+55:47
+them based on some runtime condition, right?
+
+55:49
+Going back to that enabling conditional execution approach.
+
+55:55
+And I'm adding some reference here for your further reading.
+
+56:00
+And some more reference for cuda graphs.
+
+56:02
+Again, far from a complete list as it's a very big topic.
+
+56:07
+Now we are going to switch gears a bit and talk about GPU
+
+56:10
+resource partitioning mechanisms.
+
+56:12
+As our GPUs grow and depending on your use case, you may
+
+56:16
+need to employ different techniques to better utilize your GPU
+
+56:19
+or meet your performance targets.
+
+56:21
+So we'll first start going through some use case and then delve
+
+56:23
+a bit deeper into each one of them.
+
+56:26
+So your GPUs are getting bigger, and depending on a user's
+
+56:29
+common use cases, resources can be underutilized.
+
+56:32
+So assume I have an imaginary GPU here in this schematic.
+
+56:35
+Green boxes are resources, let's say, SMs, but other resources
+
+56:39
+can be implied, that are utilized by an application, and gray boxes
+
+56:42
+are resources that aren't used.
+
+56:44
+As you can see here, the GPU utilization, let's say percentage
+
+56:47
+of active SMs is pretty low, right, 12.5%, and this is far
+
+56:52
+from ideal, Especially if all your applications underutilize your GPU.
+
+56:56
+So a solution for this issue would be to somehow split
+
+56:59
+your GPU into multiple smaller GPUs of different sizes.
+
+57:03
+This is possible with MIG, multi-instance GPU, and so
+
+57:08
+you can have different applications running on each one of them.
+
+57:11
+So you can see utilization is better.
+
+57:13
+You can still have some cases where you're underutilizing your
+
+57:16
+instance like MIG2, but it's still significantly better than before.
+
+57:20
+Of course, it's important to know that if your original application
+
+57:23
+was fully utilizing your GPU, running it on a smaller GPU will
+
+57:26
+have a performance penalty, right?
+
+57:28
+So this is more geared towards applications that
+
+57:31
+underutilize the GPU.
+
+57:33
+Now, let's assume you have a scenario where you have
+
+57:35
+two processes, A and B, and each are underutilizing GPU resources
+
+57:38
+when running in isolation.
+
+57:40
+So, in this graph, x-axis is time and y-axis is percentage
+
+57:45
+of GPU utilization, thing goes as percentage of SM active,
+
+57:48
+and higher is better, right?
+
+57:50
+In this graph, you can see that process A needs at most
+
+57:53
+30% of the SMs, and process B needs around 80% of the
+
+57:57
+SMs, and they both have a ramp-down phase as they finish their work.
+
+58:02
+Now, looking at these graphs, one may ask, OK, what if I could run
+
+58:05
+them both at the same time, right?
+
+58:06
+That would be great.
+
+58:08
+Let's see what will happen.
+
+58:09
+So if you try to run both of them at the same time and
+
+58:13
+assume you have your GPU in the default mode and you don't
+
+58:16
+have MPS running, what you will get is time-slicing behavior.
+
+58:19
+So assuming they run long enough, process A will first run
+
+58:22
+until the time slice is elapsed and then there's some connect switching
+
+58:25
+overhead, and then process B will run, and then process
+
+58:28
+A, and so on and so forth, right?
+
+58:31
+And so as you can see, the start to end of every individual
+
+58:34
+process execution has not really improved, and GPU utilization
+
+58:38
+hasn't improved either.
+
+58:39
+So what we really want, we want a mechanism that will enable
+
+58:42
+us to run these processes truly at the same time as if that work
+
+58:46
+was coming from a single process.
+
+58:49
+And so we can do that with MPS, multi-process service.
+
+58:52
+So what happens here is in the beginning, let's say process
+
+58:56
+B takes around 80% of the SMs and process A takes 20%,
+
+59:00
+which is slightly less than what it did before.
+
+59:03
+But then as process B ramps down, process A can take the remaining,
+
+59:06
+reuse the resources that it needs.
+
+59:09
+So the end effect is that we can improve the GPU utilizations,
+
+59:14
+truly running both processes at the same time, while having
+
+59:18
+good performance in terms of individual execution time.
+
+59:23
+Now, we are going to switch gears one more and talk about
+
+59:29
+a single process scenario.
+
+59:30
+So now, assume you have a single process that launches kernels
+
+59:33
+A and B on different CUDA streams.
+
+59:35
+And let's assume kernel A is a very long-running kernel
+
+59:38
+that uses all the SMs of your GPU.
+
+59:40
+And kernel B is a short-running kernel that's launched a bit later,
+
+59:44
+but it's a very critical kernel that you wanted to start executing
+
+59:47
+and finish as soon as possible.
+
+59:48
+Okay, so x-axis is time and y-axis continues to show percentage
+
+59:53
+of SM active, so higher is better.
+
+59:59
+So initially, kernel A will start executing, right, and
+
+01:00:02
+occupies all the SMs of your GPU.
+
+01:00:04
+And at some point later in time, we'll launch that critical
+
+01:00:07
+kernel B, but at this point, there are no resources available, so
+
+01:00:11
+it cannot start executing, right?
+
+01:00:12
+So what happens is that it needs to wait for some of the
+
+01:00:15
+thread blocks of the long-running kernel to complete before
+
+01:00:19
+it can start executing on the GPU.
+
+01:00:22
+So in this situation, the utilization throughout the
+
+01:00:24
+timeline is really high, right?
+
+01:00:26
+But the issue is that this critical work gets delayed.
+
+01:00:32
+So what we would really like to ensure is that there are
+
+01:00:34
+always resources available for kernel B to start executing
+
+01:00:38
+as soon as possible.
+
+01:00:39
+And this is possible using green context.
+
+01:00:42
+So green context allow us to do that by statically
+
+01:00:45
+partitioning the SMs.
+
+01:00:47
+So assume we have two grid contexts and using 80% and
+
+01:00:50
+20% SMs of the GPU.
+
+01:00:54
+So we have green context A that can use at most 80%,
+
+01:00:58
+and green context B that it can use at most 20% of the SMs.
+
+01:01:04
+And so if your GPU had 100 SMs, 80 specific SMs can only
+
+01:01:08
+be used by green context A, and 20 specific SMs by green context B.
+
+01:01:12
+So now kernel A is launched on kernel on context A, and
+
+01:01:16
+we can see it utilizes at most 80% of the SMs, but it's 100%
+
+01:01:21
+of what it's allowed to use, right?
+
+01:01:23
+Then at a later point in time, we trigger that, we launch
+
+01:01:26
+that critical kernel B, and now there are resources available,
+
+01:01:29
+right, just for that to run.
+
+01:01:31
+So it can start executing immediately, right, and thus
+
+01:01:35
+complete soon thereafter, and then kernel A can continue executing.
+
+01:01:43
+As you notice here, the overall GPU utilization is a bit lower
+
+01:01:47
+than before, right?
+
+01:01:49
+For example, work A could never use, you know, the 100%
+
+01:01:52
+of your GPU, but what we have achieved is that we have,
+
+01:01:56
+using Green Contest, we've enabled work B to start and complete
+
+01:01:59
+sooner, which was very important for this specific use case.
+
+01:02:05
+And so we've seen these three high-level options, right,
+
+01:02:09
+of resource partitioning, MIG, MPS, and green context,
+
+01:02:12
+and we'll just go through them in a bit more detail.
+
+01:02:16
+So with MIG, you can have multiple MIG instances, which
+
+01:02:20
+are physical partitions from supported GPUs, and MIG gets
+
+01:02:23
+supported from compute capability 8 and on, so from ampere and on.
+
+01:02:27
+And so each MIG instance has a predetermined fraction of
+
+01:02:29
+GPU resources, depending on the MIG profile used, and naturally the
+
+01:02:33
+profile you choose can influence your application performance.
+
+01:02:37
+So the number of resources you have, right?
+
+01:02:40
+So for something like an H100, you can have up to seven MIG instances.
+
+01:02:44
+And a MIG profile consists of a number of compute slices.
+
+01:02:48
+These are SMs, your streaming multiprocessors, and memory
+
+01:02:51
+slices, which involve a level two cache and memory.
+
+01:02:55
+And here are some examples of possible
+
+01:02:57
+combinations, profiles that
+
+01:03:01
+What's important to note is that MIG offers performance
+
+01:03:04
+isolation, error isolation, memory bandwidth, quality of
+
+01:03:08
+service across applications running on different MIG instances, right?
+
+01:03:11
+Application running on MIG instances is not going to
+
+01:03:13
+interfere with SMs on another MIG instance, right?
+
+01:03:18
+How do you use it?
+
+01:03:19
+So you first need to enable your MIG mode on the GPU,
+
+01:03:22
+assuming it's supported.
+
+01:03:23
+And now after this point, you cannot really run anything
+
+01:03:25
+unless you actually configure your MIG instances.
+
+01:03:29
+So then you can use this command to figure out what are the
+
+01:03:32
+supported possible profiles you have on your system.
+
+01:03:35
+And I'm showing the smallest and largest here with some profile
+
+01:03:38
+IDs and some useful information.
+
+01:03:40
+And then, once you decide what makes sense for your application,
+
+01:03:43
+you create your compute instances, you can use the comma-separated
+
+01:03:49
+list of profiles, and then you can actually see them listed,
+
+01:03:54
+assuming everything was successful.
+
+01:03:56
+So now, to run an application with a specific make instance,
+
+01:03:59
+all you need to do is, you know, cudaVisibleDevices,
+
+01:04:01
+you put the device ID or the UUID, and then you're good to go.
+
+01:04:06
+And finally, you destroy your make instances.
+
+01:04:10
+So me is creating, right, the static partitioning of
+
+01:04:13
+GPU resources, GPU resources only, that's not gonna do
+
+01:04:16
+anything with, let's say, your PCIe, and it's important
+
+01:04:20
+to note that this is something that you need to configure before
+
+01:04:23
+you launch any applications, right?
+
+01:04:25
+And common use case, cloud service providers when you
+
+01:04:27
+want, you know, quality of service and isolation, et cetera,
+
+01:04:30
+and I'm adding some reference for future reference at the bottom.
+
+01:04:36
+Let's now talk about NPS, Multiprocess Service.
+
+01:04:40
+So MPS allows multiple processes to run on the GPU at the same
+
+01:04:44
+time without time slicing.
+
+01:04:46
+So it's as if work was submitted by a single process in different
+
+01:04:49
+streams, in a way.
+
+01:04:51
+By default, there is no static partitioning of
+
+01:04:52
+resources or QoS with MPS.
+
+01:04:56
+And MPS client, let's say, contends for all your SMs,
+
+01:04:59
+by default at least.
+
+01:05:00
+No error isolation, contrary to MIG.
+
+01:05:03
+And so if you have an illegal memory access in one application,
+
+01:05:05
+right, that generates a core DOM, that will affect that
+
+01:05:08
+other application as well.
+
+01:05:10
+You can have up to 48 MPS clients per physical GPU,
+
+01:05:13
+and that will depend on things like the CUdeDeviceMatchConnection
+
+01:05:16
+environment variable, memory requirements, etc.
+
+01:05:21
+And you need to start an MPS daemon before you can start running
+
+01:05:25
+your application, your MPS client.
+
+01:05:28
+How do you use MPS?
+
+01:05:29
+So you need to set a bunch of environment variables in
+
+01:05:32
+the beginning, and then you need to, it's recommended that you set
+
+01:05:35
+your GPU mode into exclusive mode.
+
+01:05:39
+And then you need to start the NPS daemon.
+
+01:05:42
+And once that happens, you can just run your processes the way
+
+01:05:45
+you would, and this will be running under NPS, and you'll actually see
+
+01:05:49
+this NVIDIA CUDA NPS server under NVIDIA SMI when they are running.
+
+01:05:56
+Once you're done, you shut down the daemon, and from CUDA 12.4, you
+
+01:06:00
+can actually programmatically check if a process is an MPS client using
+
+01:06:04
+the specific API I listed here.
+
+01:06:07
+Now, different MPS clients, we mentioned that by default,
+
+01:06:10
+they can contend for all available GPU resources, such as SAMs,
+
+01:06:13
+memory, et cetera.
+
+01:06:15
+And, you know, if processes A and B tend to utilize the GPU,
+
+01:06:18
+that's a perfect MPS fit, right?
+
+01:06:20
+Nothing to worry about. Or if they fully utilize the GPU, but then
+
+01:06:24
+none of them is latency sensitive, then, okay, the individual duration
+
+01:06:28
+will be longer, but you can still get some overlap, right, of kernels
+
+01:06:32
+and memory copies, et cetera.
+
+01:06:35
+But if A and B together fully utilize the GPU and at least
+
+01:06:38
+one of them is latency-sensitive, then the latency-sensitive
+
+01:06:42
+app may suffer, right, because there's no quality of service.
+
+01:06:45
+So, for example, assume I have process A and B running at
+
+01:06:48
+the same time with MPS, right, so these are both MPS clients, but in
+
+01:06:53
+this scenario we have serialization because process A uses all the SMs.
+
+01:07:01
+And process B, in this case again, let's assume it's
+
+01:07:03
+latency-sensitive, right?
+
+01:07:05
+So what we can do is you can use MPS resource provisioning to place
+
+01:07:09
+an upper limit on the percentage of SMs a client process can use.
+
+01:07:14
+So assume we use this active third percentage and in such
+
+01:07:18
+a way that process A gets 70% of the SMs and process B gets 30%.
+
+01:07:24
+So in that case, what you can get is you can get both of them
+
+01:07:28
+running at the same time, right?
+
+01:07:30
+And we have some sort of quality of service for the latency-sensitive
+
+01:07:34
+app because we've prevented one process from utilizing
+
+01:07:37
+all the SMs of the GPU.
+
+01:07:41
+Now, how do you use active thread percentage with MPS?
+
+01:07:44
+You need to set the CUDA MPS active thread percentage
+
+01:07:46
+environment variable.
+
+01:07:48
+The values are from zero to 100.
+
+01:07:49
+By default, that's 100, which means you can use all your,
+
+01:07:52
+you can contend for all the GPU resource, SMs.
+
+01:07:57
+How can you set it? You can set it before you start the
+
+01:07:59
+MPS control daemon, and this will affect all future clients.
+
+01:08:03
+Or you can set it as could MPS active thread percentage the value
+
+01:08:07
+before you launch your application.
+
+01:08:09
+If you do that, the value specified there has to be
+
+01:08:11
+less than what you specified for the control daemon if you
+
+01:08:14
+set it to something lower than 100.
+
+01:08:17
+Also, if you have a process running as an MPS client, and you try
+
+01:08:21
+to query the multiprocessor count, this device attribute, that will
+
+01:08:25
+tell you the maximum number of SMs this has access to, based on the
+
+01:08:29
+active thread percentage you used.
+
+01:08:33
+Now, you may be wondering, what value do I use, right?
+
+01:08:37
+And so, a couple things that I would suggest you consider
+
+01:08:41
+is the active thread percentage of each process in isolation
+
+01:08:45
+and the sum of all the active thread percentage of the processes
+
+01:08:47
+you want to run, right?
+
+01:08:49
+And experiment depending on your workload.
+
+01:08:52
+Just a reminder that if the sum of everything is greater
+
+01:08:54
+than 100, you are kind of over-subscribing, but if the active
+
+01:08:58
+thread percentage of an individual process is less than 100, then
+
+01:09:01
+at least you ensure that no single process can use your entire GPU.
+
+01:09:06
+And again, some examples that if you have homogeneous processing
+
+01:09:09
+using a uniform percentage kind of makes sense, and if
+
+01:09:12
+your application's latency is sensitive, it may make
+
+01:09:15
+sense to consider avoiding some of the subscription, right, to
+
+01:09:19
+maintain some quality of service.
+
+01:09:21
+And a couple notes about Nsight system profiling.
+
+01:09:24
+So if you do not have MPS, and assume you have the default
+
+01:09:27
+compute mode, then you can see the time slicing behavior using
+
+01:09:32
+the GPU context switch argument.
+
+01:09:34
+So you can see here that you can have only one process
+
+01:09:37
+running at a given time.
+
+01:09:39
+Something else that I find is useful is you can use the
+
+01:09:42
+collect GPU metrics and insight systems, and then you can
+
+01:09:45
+look at metrics, for example, SMs active, to give you some
+
+01:09:48
+insights into the GPU utilization.
+
+01:09:51
+Just be careful and carefully review the definition of these
+
+01:09:54
+metrics, because this can vary a bit between, for example,
+
+01:09:56
+what NSYS uses and what NVIDIA SMI may report, right?
+
+01:09:59
+So just review that in detail.
+
+01:10:02
+So now we've talked about MPS, which has this dynamic
+
+01:10:04
+partitioning, right, where you need to start the MPS
+
+01:10:07
+service in advance.
+
+01:10:08
+You have this configuration options of active thread percentage.
+
+01:10:11
+And you can actually have other environment variables to control
+
+01:10:14
+things, such as could MPS pin divide memlimit to limit how much
+
+01:10:18
+device memory can be allocated.
+
+01:10:21
+And this is generally targeting different processes, and the
+
+01:10:24
+idea is that you don't need error isolation, at least currently.
+
+01:10:28
+And some references for further reading.
+
+01:10:31
+We are now going to, from my side at least, finish up
+
+01:10:35
+talking about green context.
+
+01:10:37
+So a green context is associated with a set of GPU resources,
+
+01:10:41
+currently SMs, and green context allow us to spatially partition
+
+01:10:47
+the SMs so GPU work, whether it's a kernel or a graph,
+
+01:10:50
+can only use the specific SMs.
+
+01:10:53
+Right, like the example I showed you earlier.
+
+01:10:55
+You can have multiple grid contexts within the same application,
+
+01:10:59
+and green context functionality is available only via the
+
+01:11:02
+CUDA driver API, so you need to link with CUDA when you compile.
+
+01:11:07
+It requires some small application changes to create the green
+
+01:11:11
+context, but you don't need to do any GPU code modifications, right?
+
+01:11:15
+You don't need to modify your kernels to use them.
+
+01:11:18
+And for the examples I'm going to show here, I'm going to
+
+01:11:20
+assume that you have CUDA 12.8 with the latest CUDA driver.
+
+01:11:24
+So you may be wondering, okay, what's the difference between
+
+01:11:27
+green context and MPS?
+
+01:11:28
+So at a high level, MPS primarily targets different processes while
+
+01:11:32
+green context target an individual process, and with green context,
+
+01:11:35
+you don't need to do anything like start a service beforehand.
+
+01:11:39
+If you have MPS with 80% active thread percentage and a green
+
+01:11:43
+context with 80 SMs available, and let's assume we have a
+
+01:11:46
+GPU with 100 SMs, so the two values mean the same thing,
+
+01:11:49
+what you'll have in both cases, both can use at most 80 SMs.
+
+01:11:54
+But with MPS, you can have any ADSMs.
+
+01:11:56
+The ADSMs used can vary over time, while with GreenCodex,
+
+01:11:59
+you can only use the specific ADSMs that were spatially partitioned
+
+01:12:03
+during GreenCodex creation.
+
+01:12:06
+And if you go into an oversubscribe example where you have, again,
+
+01:12:10
+three processes or three green contexts, again, 100 SM GPU for
+
+01:12:13
+convenience, and so you have 80, 20, and 40, with green contexts,
+
+01:12:18
+the user can control to some extent how many SMs may be shared
+
+01:12:23
+across the three green contexts, while that kind of fine level
+
+01:12:26
+control you don't have with MPS.
+
+01:12:30
+So at the heart of GreenCondex is this
+
+01:12:32
+notion of a device resource, right?
+
+01:12:34
+The GreenCondex spatially partitioned GPU resources, and so
+
+01:12:38
+we can only use the specific SMs.
+
+01:12:41
+So the QDeviceResourceTrack has a type, and we care about
+
+01:12:45
+the QDeviceResourceTypeSM, and the QDevSMResource is
+
+01:12:50
+a struct with an unsigned SM count, which is the number
+
+01:12:54
+of SMs this GreenCondex will have.
+
+01:12:56
+And there is also this CUdevResourceDescriptor,
+
+01:12:59
+this descriptor that will encapsulate the resources
+
+01:13:01
+a green context can use.
+
+01:13:04
+So how do you create a green context?
+
+01:13:06
+At a very high level, first you get the access to your
+
+01:13:10
+available GPU resources.
+
+01:13:12
+Then you split the resources into one or more homogeneous partitions
+
+01:13:16
+in the remaining partition.
+
+01:13:17
+You create a resource descriptor combining,
+
+01:13:20
+if needed, different partitions.
+
+01:13:22
+And finally, you create a green context from this
+
+01:13:24
+resource descriptor.
+
+01:13:26
+Once you've done that, you can create actually streams that belong
+
+01:13:28
+to that green context, and if you launch a kernel using triple-chef
+
+01:13:32
+annotation, for example, on that green context, that kernel
+
+01:13:35
+can only use the specific assembs that you have in that descriptor.
+
+01:13:40
+So let's go step by step.
+
+01:13:41
+The first step is you get access to your resources.
+
+01:13:44
+Your starting point is usually your device, right?
+
+01:13:46
+And so you can use this device, CUdeviceGateDevResource API.
+
+01:13:52
+And get access to the resources that are available to you.
+
+01:13:56
+So you specify your device, the resource type is a SEM,
+
+01:14:00
+and then you are going to populate the device resources
+
+01:14:02
+that are available to you.
+
+01:14:04
+And you can query afterwards to see how many SEMs you have access to.
+
+01:14:08
+There are also different points, starting points from a context
+
+01:14:11
+or a green context, but the APIs are kind of similar.
+
+01:14:15
+So now the next step is to statically partition
+
+01:14:17
+the available SM resources using the split-by-count API into
+
+01:14:21
+one or more homogeneous partitions with potentially some SMs left
+
+01:14:26
+over for the remaining partition.
+
+01:14:28
+So if this is my API, I'm going to split it into a number of groups.
+
+01:14:34
+These are homogeneous groups.
+
+01:14:38
+And I can potentially have some number of remaining SMs.
+
+01:14:44
+So this is my API, and in the beginning, I request a
+
+01:14:46
+number of homogeneous group with a number of SMs each,
+
+01:14:49
+but I might get slightly...
+
+01:14:54
+Fewer groups that are requesting with potentially more SMs because
+
+01:14:57
+of some alignment constraints.
+
+01:14:59
+So, for example, if I'm on an H200 where it has 132 SMs, I
+
+01:15:05
+might request two groups of 72 SMs.
+
+01:15:07
+I'll get one group of 72 SMs just because there aren't enough SMs.
+
+01:15:11
+Or if I have six groups with 11 SMs requested and I'm using use
+
+01:15:15
+flags of zero, I'll end up having six groups with 16 SMs because
+
+01:15:19
+with Hopper there is this kind of multiple of eight requirement for
+
+01:15:23
+the number of SMs in your group.
+
+01:15:24
+But you can lower that a bit using a different use flags that's listed
+
+01:15:30
+here, and then you can lower it to a multiple of two requirement.
+
+01:15:34
+And there's also a minimum requirement.
+
+01:15:38
+So now we've used the device split by count API, right?
+
+01:15:43
+And then we can split our resources.
+
+01:15:45
+And the next step is to generate the descriptor
+
+01:15:49
+based on these resources.
+
+01:15:51
+So you call this CUdevResourceGenerateDescriptor
+
+01:15:54
+API, that you want to encapsulate a bunch of resources.
+
+01:15:57
+So let's say I want to encapsulate three resources, and then
+
+01:16:01
+I specify the starting pointer in an array, and then I have
+
+01:16:04
+generated a descriptor.
+
+01:16:07
+Once I've done that, the last step is to create a green
+
+01:16:09
+context from this descriptor.
+
+01:16:12
+So I just call QGreenContextCreateAPI,
+
+01:16:15
+and I'm going to this way generate, create a green
+
+01:16:20
+context that will only have access to the specific resources, right,
+
+01:16:24
+that are previously partitioned.
+
+01:16:26
+To submit work, the next step is to create a green context stream.
+
+01:16:32
+So you can create a green context stream for that
+
+01:16:34
+green context, right?
+
+01:16:36
+Could green context stream create where you specify the
+
+01:16:38
+device, and you can also specify a stream priority.
+
+01:16:42
+And now if I launch a kernel on that specific stream, that
+
+01:16:45
+kernel will only have access to these assembly sources.
+
+01:16:49
+And there's an alternative way of using it that you
+
+01:16:51
+can refer to later.
+
+01:16:53
+There are a couple more GreenCondex driver APIs that are of interest.
+
+01:16:56
+You can record an event that encapsulates all work of the
+
+01:16:58
+specified GreenCondex at the time of the call.
+
+01:17:01
+Now, this is important because people may wonder, okay, how
+
+01:17:05
+is this different than recording a good event record?
+
+01:17:08
+If you just have one stream in your GreenCondex, that's equivalent.
+
+01:17:11
+But if you have many streams in your GreenCondex, instead
+
+01:17:13
+of recording an event on every single one of them,
+
+01:17:16
+you can record a single event encapsulating all the work.
+
+01:17:20
+There's a similar CUDA green context wait event API.
+
+01:17:23
+You can figure out if a given stream belongs to a green
+
+01:17:25
+context, and then you can, of course, destroy a green context.
+
+01:17:29
+So I'm gonna wrap up with a short example.
+
+01:17:32
+So assume I launch a long-running kernel that takes multiple waves
+
+01:17:35
+on the GPU on a given stream, and then I wait from the CPU for a bit,
+
+01:17:39
+and then launch a critical kernel, right, on a different stream.
+
+01:17:42
+And let's see how the timeline would look like.
+
+01:17:45
+And the long-running kernel, as we said, is a delayed kernel
+
+01:17:47
+that has multiple waves.
+
+01:17:51
+So let's look first at the timeline.
+
+01:17:53
+If I launch first the delay kernel, right?
+
+01:17:58
+I'm gonna launch it on stream 13.
+
+01:18:00
+You can see it at the top executing on the GPU side, and then wait
+
+01:18:04
+a bit on the CPU, and then launch critical kernel on stream 15.
+
+01:18:09
+Stream 15 here is a high priority stream, right?
+
+01:18:12
+Higher priority.
+
+01:18:13
+And at this point, I don't use green context.
+
+01:18:15
+What will happen is you see there is a bit of a lost time, quite a
+
+01:18:18
+bit of lost time, 0.9 milliseconds, where the critical kernel
+
+01:18:21
+cannot start executing because there aren't enough resources.
+
+01:18:24
+So it's waiting for thread blocks from the primary kernel
+
+01:18:26
+to finish executing before it can start, right, running.
+
+01:18:30
+And so this is really not acceptable if you
+
+01:18:31
+have a critical kernel.
+
+01:18:33
+So what happens if we use green context?
+
+01:18:35
+So let's say I use two green context, and I partition that
+
+01:18:39
+such that we have 16 and 112 ASAMs for each green context.
+
+01:18:45
+So we launch the delay kernel first.
+
+01:18:48
+You can see the green context identifiers and then sys trace.
+
+01:18:52
+And then when we launch the critical kernel,
+
+01:18:55
+It starts running instantaneously almost, right?
+
+01:18:58
+Because there are resources available for it to run.
+
+01:19:02
+And it's important to note that the longer running kernel
+
+01:19:04
+has increased its execution, right?
+
+01:19:06
+Because it has access to fewer resources.
+
+01:19:08
+And you can control, of course, the execution of the critical
+
+01:19:10
+kernel depending on how many SMs you assign to that green context.
+
+01:19:15
+And finally, you can actually use Nsight Compute to see
+
+01:19:18
+that you split the resources the way you expect.
+
+01:19:21
+So here you see every green box corresponds to two SMs for
+
+01:19:24
+the two green contexts, and then you can see that one green context
+
+01:19:27
+only has access, let's say, to 16 SMs in this example, and there
+
+01:19:30
+is no overlap, right, between the SMs of different green contexts.
+
+01:19:34
+So this wraps up the green context part, and we have
+
+01:19:38
+shown how you can use green context to ensure SM resources are
+
+01:19:43
+available for critical work, right?
+
+01:19:45
+And Igor will wrap up with the cluster launch control feature.
+
+01:19:52
+Thank you for watching!
+
+01:19:58
+Okay, so I'll finish with the cluster launch control.
+
+01:20:04
+So Cluster Launch Control is a new feature that was introduced
+
+01:20:07
+with Blackwell architecture, and it allows for work-stealing approach
+
+01:20:12
+with respect to thread blocks.
+
+01:20:14
+The name Cluster Launch Control is slightly misleading because
+
+01:20:17
+this feature deals with thread block management, including thread
+
+01:20:21
+block clusters, but not necessarily to thread block clusters only.
+
+01:20:27
+So let's first give a brief summary of thread blocks.
+
+01:20:32
+So a CTA is a basic unit of org decomposition on GPUs, and they're
+
+01:20:37
+completely independent of each other and do not interact, except a
+
+01:20:41
+special case of cooperative launch.
+
+01:20:47
+As I mentioned, in the CUDA stream section, CTAs from different
+
+01:20:50
+kernels may execute concurrently.
+
+01:20:53
+And once started, a CTA cannot be swapped out and runs to completion.
+
+01:21:00
+Also, it should be mentioned that starting a CTA involves
+
+01:21:03
+some overhead from the scheduler.
+
+01:21:12
+Okay, so there are two main approaches to choosing number
+
+01:21:15
+of CTAs, and each of these approaches has its own benefits
+
+01:21:18
+and disadvantages.
+
+01:21:20
+In the first approach, the number of CTAs is proportional
+
+01:21:22
+to the problem size, and each CTA performs a fixed amount of work.
+
+01:21:26
+And in the second approach, the number of CTAs is fixed,
+
+01:21:30
+and it's typically proportional to the resources, say, number of SMs
+
+01:21:35
+times two in this example, because of the occupancy, we can run two.
+
+01:21:41
+CTA is per SM, and the next slide, and now let's talk about advantages
+
+01:21:51
+and disadvantages of each approach.
+
+01:21:53
+So for the problem-size-based thread block count, the
+
+01:21:58
+first advantage is that it allows preemption.
+
+01:22:01
+So here I'm launching a high-priority kernel after
+
+01:22:05
+launching a low-priority kernel, and the high-priority kernel can...
+
+01:22:10
+Click in and run as soon as it launched or possibly
+
+01:22:16
+with slight delay, but basically as soon as CTAs
+
+01:22:19
+of the low-priority kernel exit.
+
+01:22:22
+And after that, the scheduler will resume running CTAs of
+
+01:22:26
+a low-priority kernel.
+
+01:22:28
+Second advantage is load balancing, so as you can see here in
+
+01:22:32
+this cartoon, even with varying individual CTA runtimes, if
+
+01:22:36
+the number of CTAs is large enough, the tail effect is negligible
+
+01:22:40
+and total SM runtimes are similar.
+
+01:22:45
+However, in case of problem-size-based
+
+01:22:51
+CTA count, the total cumulative CTA launch overhead can be high.
+
+01:22:58
+And in addition to scheduler overhead, we may have a much
+
+01:23:03
+larger common code overhead, as shown in this picture.
+
+01:23:09
+So in case of persistent kernels, the situation is opposite.
+
+01:23:16
+So there is no preemption and possibly poor load balancing,
+
+01:23:21
+but at the same time, you can see that the cumulative
+
+01:23:24
+overheads are reduced.
+
+01:23:29
+There is another approach.
+
+01:23:32
+That is custom load balancing that's based on atomic-based
+
+01:23:36
+CTA counter, and it has a number of disadvantages.
+
+01:23:40
+First, it's a cumbersome solution that has no dedicated
+
+01:23:43
+hardware support.
+
+01:23:46
+Also, you need to know how many thread blocks to launch,
+
+01:23:52
+and you can make a mistake if some SMs in the CTA are
+
+01:23:56
+busy with running other kernels.
+
+01:24:00
+So this table summarizes the pros and cons of each approach.
+
+01:24:08
+Cluster Launch Control, it's a new feature that was introduced
+
+01:24:12
+to address all these issues.
+
+01:24:16
+So similar to the atomic counter approach, it is based on work
+
+01:24:19
+steering, which is called CTA cancellation.
+
+01:24:23
+So a CTA that is currently running can request to cancel
+
+01:24:26
+an index of a CTA that has not yet started, and if the
+
+01:24:29
+cancellation is successful, it can perform the work of a stolen CTA.
+
+01:24:34
+So, and this cartoon shows the...
+
+01:24:39
+Shows the timeline, so in particular you can see that
+
+01:24:43
+CTAs are requesting to cancel non-started CTAs in a loop, but
+
+01:24:49
+if there is a high priority kernel that was launched, the cancellation
+
+01:24:55
+will fail, so the CTAs may exit and yield to a higher priority kernel.
+
+01:25:02
+So now let's talk about the API.
+
+01:25:04
+So the programming pattern for CTA cancellation is very similar
+
+01:25:07
+to a synchronous TMA memory copy.
+
+01:25:10
+So one thread requests to cancel asynchronously.
+
+01:25:13
+The result is put into a shared memory, and completion is
+
+01:25:16
+tracked with a transaction count in a shared memory barrier.
+
+01:25:23
+So here's the code.
+
+01:25:24
+So as you can see...
+
+01:25:31
+As you can see here, we basically first declare
+
+01:25:34
+shared memory for cancellation result and the barrier.
+
+01:25:38
+Then we initialize our barrier, in this case with a single
+
+01:25:42
+arrival because we are going to arrive inside this if statement.
+
+01:25:48
+Done very similarly to TMA, we fired the cancellation
+
+01:25:52
+request here and set the barrier expected transaction count.
+
+01:25:58
+So while the cancellation is, so to speak, on flight, we can perform
+
+01:26:03
+current CTA work here in blue.
+
+01:26:07
+And finally, we wait for cancellation completion
+
+01:26:11
+by synchronizing the barrier.
+
+01:26:13
+And in case the completion failed, we can exit.
+
+01:26:20
+Otherwise, we...
+
+01:26:22
+We set our thread block index to the index of the cancelled
+
+01:26:27
+CTA and proceed to the new iteration of the loop.
+
+01:26:32
+So, note that here I have necessary proxy fences because
+
+01:26:37
+this feature uses async proxies, which were described in detail
+
+01:26:41
+yesterday in Allard's and Athena talk, and I will refer you
+
+01:26:45
+to that talk for more information.
+
+01:26:50
+So, some optimization.
+
+01:26:51
+Here I'm showing the typical double buffering that allows
+
+01:26:54
+to get rid of these sync threads.
+
+01:26:57
+So, we need these sync threads to make sure that the next
+
+01:26:59
+iteration does not step over on the shared memory variable
+
+01:27:03
+from the previous iteration.
+
+01:27:05
+So, basically what we do, we declare two results and
+
+01:27:08
+we alternate where we put the result of the cancellation
+
+01:27:14
+in a pinpoint fashion.
+
+01:27:17
+Also note that here I have invoke one API call that allows
+
+01:27:23
+compiler to avoid the pilling loop because cluster launch control,
+
+01:27:28
+it's a uniform instruction, very similar to TMA, and again,
+
+01:27:32
+this was described in more detail by Athena in our yesterday's
+
+01:27:38
+performance optimization talk.
+
+01:27:42
+One last thing, you know, previous example, it was an
+
+01:27:49
+example for one-dimensional thread blocks, grid size.
+
+01:27:54
+In case of multi-dimensions, this example is very
+
+01:27:57
+trivially extendable.
+
+01:27:59
+You just need to change the code highlighted here in red.
+
+01:28:05
+Okay, now canceling the CTAs in a cluster launch control
+
+01:28:11
+is pretty similar.
+
+01:28:13
+So the cancellation has to be requested by one friend
+
+01:28:16
+within the cluster.
+
+01:28:18
+However, since the result is multicast into all the
+
+01:28:21
+CTAs of a CJA, the synchronization is done locally by each CTA.
+
+01:28:28
+Also.
+
+01:28:29
+All the CTAs within the cluster will get the result of the
+
+01:28:33
+root CTA that requested the cancellation, so they will
+
+01:28:36
+have to add a local offset to restore their true CTA indices.
+
+01:28:45
+So here's the code, and as I said...
+
+01:28:50
+Here we have, so as before, here we have a cluster-level
+
+01:28:55
+synchronization instead of sync threads that protects from
+
+01:28:59
+override by the next iteration, and also it ensures that all the CTAs
+
+01:29:03
+are running at first iteration.
+
+01:29:07
+Then the request, as I mentioned, is made by a single cluster thread.
+
+01:29:11
+However, the completion is tracked by each CTA.
+
+01:29:17
+Finally, each CTA receives an index of the cancelled
+
+01:29:23
+root CTA, so it has to offset it with its local offset.
+
+01:29:30
+Now let's take a look at some examples.
+
+01:29:32
+So I'm showing examples of that simple vector scalar
+
+01:29:35
+multiplication kernel.
+
+01:29:36
+So if number of CTAs is correct, SEMs are not busy,
+
+01:29:44
+then persistent kernel and cluster launch control run.
+
+01:29:48
+Run at the same time.
+
+01:29:50
+However, in the case when we have some other kernel
+
+01:29:54
+occupying, say, one SM, persistent kernel performance doubles
+
+01:29:58
+because now the number of CTAs that was launched in the persistent
+
+01:30:03
+kernel case was incorrect, which resulted in two waves of CTAs.
+
+01:30:11
+Another example is when, let's say, CDAs on 1SM run longer.
+
+01:30:16
+Again, persistent kernel will show the load imbalance, whereas
+
+01:30:20
+cluster launch control basically performs as before.
+
+01:30:26
+Finally, let's take a look at the preemption.
+
+01:30:30
+So this is preemption for...
+
+01:30:34
+Persistent kernels example, and since I start my high-priority
+
+01:30:38
+kernel with some delay, and by that time all the
+
+01:30:42
+SMs are occupied by a persistent kernel, the high-priority
+
+01:30:49
+kernel cannot start until the persistent kernel finishes.
+
+01:30:53
+In case of the work ID, as you can see here, a high-priority
+
+01:30:58
+kernel starts right away.
+
+01:31:01
+And then as it finishes, the scheduler will continue scheduling
+
+01:31:05
+CTAs from the lower priority kernel that uses cluster launch control.
+
+01:31:14
+Okay, this concludes today's presentation, and here
+
+01:31:17
+we are listing...
+
+01:31:19
+A number of CUDA sessions that are related to performance
+
+01:31:25
+optimization and other topics.
+
+01:31:28
+And we will be happy to take your questions.
+
+01:31:33
+Thank you so much for an amazing session on CUDA.
+
+01:31:36
+So we have now approximately 10 minutes for the question round.
+
+01:31:43
+So I would be passing on the mic.
+
+01:31:45
+So whoever has a question can just raise their hand.
+
+01:31:48
+So let's start from the first row.
+
+01:32:06
+You don't have to do anything.
+
+01:32:07
+It will be controlled there.
+
+01:32:10
+Great presentation. Thank you. I was wondering, how
+
+01:32:13
+does stream priorities that you were showing in the very
+
+01:32:15
+beginning compare, especially where you could have interruption
+
+01:32:20
+of a high-priority kernel, how does that compare to running
+
+01:32:23
+green context in particular?
+
+01:32:27
+Because you're able to interrupt a long-running kernel.
+
+01:32:34
+So for green context, you can still have streams with
+
+01:32:37
+different priorities, right, within good green context, right?
+
+01:32:40
+So with green context, we kind of spatially partition
+
+01:32:44
+the resources, right?
+
+01:32:45
+So it's kind of controlling that there are SMs available
+
+01:32:48
+for this to run, right?
+
+01:32:50
+While for stream priorities, you are using the stream priority
+
+01:32:56
+to determine, okay, if I...
+
+01:33:00
+If I have, you know, launch two kernels, right, who will
+
+01:33:03
+that get scheduled, right?
+
+01:33:05
+But they can get scheduled, they compete for all the SM
+
+01:33:09
+resources, right?
+
+01:33:10
+Well, green context, you have that partitioning of SM resources,
+
+01:33:14
+and then on top of that, you can also use different stream
+
+01:33:16
+priorities there.
+
+01:33:18
+Does that answer the question?
+
+01:33:29
+Thank you very much.
+
+01:33:31
+Useful information there.
+
+01:33:34
+Got a question about the programmatic,
+
+01:33:37
+sorry, and then launch.
+
+01:33:41
+Is there a way to, like, manage to, like, release
+
+01:33:45
+or acquire SM resources like shared memory and registers,
+
+01:33:49
+because that would be something that would prevent overlap?
+
+01:33:54
+So if you have two columns that use all of the shared memory?
+
+01:33:58
+Then you can't really have a tail and a preamble that
+
+01:34:05
+would overlap, even though they might not use all of
+
+01:34:07
+the shared memory at those times.
+
+01:34:11
+I have two kernels that kind of use all my resources and
+
+01:34:14
+then they cannot really start executing, right?
+
+01:34:16
+So programmatic dependent launch will not help with that, right?
+
+01:34:19
+So the expectation is that you have resources available, right?
+
+01:34:22
+So they would be possible for them to overlap.
+
+01:34:24
+And then instead of waiting for the kernel, right, on
+
+01:34:27
+the same stream to complete before you start the subsequent kernel on
+
+01:34:30
+the same stream, you can overlap.
+
+01:34:31
+But yes, as you correctly point out, that requires that
+
+01:34:34
+there are enough resources also, like whether it's, you know,
+
+01:34:36
+should memory, et cetera, so they can start executing on your GTU
+
+01:34:40
+somewhere, right, at the same time.
+
+01:34:47
+How that interacts with the preferred cost of science?
+
+01:34:57
+These are completely orthogonal things, cluster size.
+
+01:35:08
+Thank you very much.
+
+01:35:14
+Well, that's again, that's basically based on resource
+
+01:35:17
+availability, you know, if a particular CJA exits and
+
+01:35:23
+we have another higher priority kernel, if a scheduler can
+
+01:35:29
+start a CTA or CJA from that higher priority kernel, it will do it.
+
+01:35:33
+If not, it will continue scheduling CTAs or CJAs
+
+01:35:38
+from a lower priority kernel.
+
+01:35:47
+Please, yeah, you can say the question.
+
+01:35:51
+I would repeat for the audience, live audience.
+
+01:36:33
+Could you repeat the question?
+
+01:36:35
+Yes, I will try to rephrase that.
+
+01:36:50
+I have green context, right?
+
+01:36:51
+This is how I interpret your question.
+
+01:36:53
+So you can still have that, right?
+
+01:36:56
+But then you risk not having resources available, right?
+
+01:37:00
+So if I have another green context that has access to
+
+01:37:03
+partially overlapping resources or even the same SMs, that could work.
+
+01:37:06
+And then what you have, it will be...
+
+01:37:09
+You know, the way work from different stream will compete
+
+01:37:12
+for the same SM resources, right?
+
+01:37:14
+And there you can even use priorities a bit.
+
+01:37:16
+But then you won't have that guarantee that nothing else
+
+01:37:19
+can run there, right?
+
+01:37:20
+So it depends on your application.
+
+01:37:22
+If you only want to make sure that, oh, the critical kernel
+
+01:37:25
+is the only thing that runs on these SMs and they are always
+
+01:37:27
+available, then you shouldn't oversubscribe to these SMs.
+
+01:37:30
+But it depends on, you know, your application and what
+
+01:37:33
+kind of level, kind of leeway you have there, right?
+
+01:37:36
+Depending on time and guarantees, et cetera.
+
+01:37:39
+Does that help? Yeah, so I'm interpreting the answer as saying,
+
+01:37:40
+like, in general, we would...
+
+01:37:53
+So all I'm saying is that when you have green context,
+
+01:37:55
+right, you have, this can run specific ASAMs, right?
+
+01:37:58
+If there are two green contexts that have access to the same
+
+01:38:02
+resources, then it will be the same way you would have
+
+01:38:05
+traditionally, right?
+
+01:38:06
+They can compete based on stream priorities and other constraints
+
+01:38:09
+like another person from the audience asked before, right?
+
+01:38:15
+We'll just take one more question and you can stand and then,
+
+01:38:20
+you know, you can have the question one-to-one if that's okay.
+
+01:38:47
+So the conditional node, so the question is how do we, with
+
+01:38:50
+conditional graph nodes, right, who evaluates that condition, right?
+
+01:38:54
+So a conditional node is an actual new type of node in
+
+01:38:57
+your graph, right, where you have specified that conditional
+
+01:39:00
+value in that handle.
+
+01:39:02
+And when that, the same way any kernel node will execute,
+
+01:39:04
+right, when that conditional value executes, that handle
+
+01:39:07
+that you have associated with the node, right, will evaluate that
+
+01:39:10
+condition on the GPU side, right?
+
+01:39:18
+So the conditional node is something that executes
+
+01:39:20
+on your GPU, right?
+
+01:39:22
+It's not like a kernel, it's just a different type of node
+
+01:39:25
+that will execute, and based on the condition, it will determine
+
+01:39:27
+which body graph executes next.
+
+01:39:31
+I mean, of course, you need to spend, but it's way better than
+
+01:39:33
+going back to the CPU and having all that synchronization, yes.
+
+01:39:37
+Perfect, so this concludes this session, and let's give a big round
+
+01:39:41
+of applause to our presenters.
+

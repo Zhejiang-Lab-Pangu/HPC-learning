@@ -1,0 +1,3174 @@
+CUDA: New Features and Beyond
+
+
+00:01
+Hi, everyone.
+
+00:03
+I'm Stephen Jones.
+
+00:04
+And I'm one of the architects of CUDA.
+
+00:06
+If you tune into GTC regularly, you
+
+00:09
+know that I've given this talk every year
+
+00:10
+for the last several years.
+
+00:12
+And I always try and talk about how advances in GPU hardware
+
+00:15
+are mapped into the CUDA ecosystem.
+
+00:18
+This time around, I wanted to spend a little more time
+
+00:20
+looking ahead, talking about what I see coming
+
+00:23
+and how it affects how I think about this hardware-software
+
+00:26
+mapping.
+
+00:27
+Because we're at a kind of inflection
+
+00:29
+point in hardware design.
+
+00:30
+And there are some implications which
+
+00:32
+change how I, at least, think about the future.
+
+00:37
+I'm going to start with something NVIDIA's CEO Jensen
+
+00:39
+Huang said during a Q&A session last GTC.
+
+00:43
+It created a lot of comment with people
+
+00:44
+loudly agreeing or disagreeing.
+
+00:46
+But if you read the interview, you'll
+
+00:48
+find that Jensen carried on to say
+
+00:49
+something else, which is what I really
+
+00:51
+want to talk about today.
+
+00:54
+I'm not going to debate the alive or dead status
+
+00:56
+of Moore's law.
+
+00:57
+But what I am interested in are the software implications
+
+01:00
+of the change in Moore's law that is, unquestionably,
+
+01:03
+taking place right now.
+
+01:06
+Let's start with a bit of history.
+
+01:08
+Before 2007, transistors got smaller.
+
+01:10
+And clock speeds got faster.
+
+01:12
+This created the performance increase that Moore observed.
+
+01:16
+Now, to get into the physics of that for a moment,
+
+01:18
+the dynamic power consumption of a CMOS transistor
+
+01:21
+is proportional to frequency.
+
+01:22
+So as frequency goes up, it takes more power.
+
+01:25
+But as we shrink transistors, they
+
+01:27
+get smaller and, therefore, use less power.
+
+01:29
+They take fewer electrons to turn them on.
+
+01:31
+So we balance that power saving with the ability of increasing
+
+01:35
+the clock frequency.
+
+01:36
+In other words, a new chip, which
+
+01:38
+is the same size and power, has more performance
+
+01:41
+because it's got more transistors and a higher clock
+
+01:43
+frequency.
+
+01:44
+And the clock frequency is, by far, the largest boost
+
+01:47
+of performance.
+
+01:47
+Because just adding more transistors to a CPU core
+
+01:50
+doesn't automatically make it more efficient.
+
+01:52
+So while Dennard scaling held, which
+
+01:55
+is this shrinking in power relationship,
+
+01:58
+we saw ever-faster chips.
+
+01:59
+This was called the gigahertz race.
+
+02:03
+Around 2006 or '07, quantum mechanics kicked in and said,
+
+02:07
+enough, right?
+
+02:08
+The transistors got so small that quantum leakage currents
+
+02:11
+started to dominate power.
+
+02:13
+And then we couldn't increase the frequency anymore.
+
+02:15
+And so even though Moore's law still
+
+02:17
+allowed us to pack 30% more transistors
+
+02:20
+in every couple of years, the clock speed
+
+02:22
+flattened out, right?
+
+02:23
+That's what you see on the left.
+
+02:25
+What we saw then in the hardware was what some people
+
+02:27
+call horizontal scaling.
+
+02:29
+They designed chips with more cores.
+
+02:31
+Because we could no longer make a single core go faster.
+
+02:35
+And so these graphs show how the first phase ended.
+
+02:37
+And we entered the second phase of increasing core counts.
+
+02:42
+So we solved the first problem of Moore's law transition
+
+02:46
+by packing more cores into a, chip what's
+
+02:48
+known as single-die scaling.
+
+02:50
+Things didn't speed up as rapidly as they
+
+02:52
+had during the gigahertz race.
+
+02:53
+And software, importantly, needed to become multithreaded.
+
+02:56
+I talked about this a lot at GTC last year.
+
+02:58
+So I'm not going to go into that here.
+
+03:00
+But multicore has been good for about 15 years.
+
+03:04
+It's the implications of hitting the wall on single-die scaling
+
+03:07
+that I want to talk about today.
+
+03:11
+So let's talk about, for a moment again, the physics
+
+03:13
+of hitting that wall.
+
+03:15
+When etching a silicon chip, there's
+
+03:16
+a limit to how big it can be because of limits
+
+03:18
+on how precisely we can focus the light that
+
+03:20
+draws the circuits.
+
+03:21
+This is called the radical limit.
+
+03:23
+And it sets the maximum size of a chip and, hence,
+
+03:26
+the maximum number of transistors
+
+03:27
+that can be placed on it.
+
+03:29
+This maximum number is helped both by transistors getting
+
+03:32
+smaller and by optical technology getting better,
+
+03:34
+making dies larger.
+
+03:35
+But we're hitting the limit of both of these.
+
+03:37
+In particular, to make smaller transistors
+
+03:39
+now needs very high frequency light.
+
+03:42
+But high frequency light is harder to focus.
+
+03:44
+So the die size can't grow.
+
+03:46
+So we've really run into as much of a physical limit of this era
+
+03:49
+as we did at the end of Dennard scaling.
+
+03:54
+One solution that's been around for a long time
+
+03:56
+is to create specialist hardware to do certain tasks which
+
+03:59
+are common but which are slow and inefficient
+
+04:02
+with generic execution hardware.
+
+04:04
+Some things like a floating point unit
+
+04:05
+have been around for so long you probably don't even
+
+04:07
+think of it as a special-purpose hardware.
+
+04:09
+But they used to be standalone co-processors
+
+04:11
+because the way they work is so different from normal computer
+
+04:14
+logic.
+
+04:16
+NVIDIA has embraced special-function hardware
+
+04:18
+since the beginning.
+
+04:19
+So it's no surprise to find all of these things in a GPU.
+
+04:22
+This is a picture of the processing cores from the ADA
+
+04:24
+architecture, the most recent graphics chip we released.
+
+04:27
+Even age-old things like the floating point unit
+
+04:29
+have exotic special functions, such as hardware,
+
+04:32
+accelerated cosine, and reciprocal square root,
+
+04:34
+and that kind of stuff.
+
+04:37
+Another way many of you use heterogeneity every day
+
+04:39
+is when you write software.
+
+04:41
+It's common to write one part of an application in one language,
+
+04:43
+say, your main top level code in Python,
+
+04:46
+and call into libraries or components written
+
+04:48
+in a different language.
+
+04:50
+If you've ever used NumPy, this is exactly what you've done.
+
+04:53
+NumPy is largely implemented in C++.
+
+04:56
+And so Python is very productive and easy to write.
+
+04:59
+But for high performance, you switch to a compiled language.
+
+05:01
+Note that both of these, of course,
+
+05:03
+are still running on the same processor
+
+05:04
+and even using the same hardware.
+
+05:06
+This is heterogeneous software.
+
+05:08
+But it's not yet heterogeneous hardware.
+
+05:12
+The programmable GPU took this a step further
+
+05:14
+and specialized an entire device for fast data parallel
+
+05:17
+computation, both for graphics and non-graphics applications.
+
+05:20
+A single application would then execute some components
+
+05:23
+on a serial CPU and others on a parallel GPU.
+
+05:26
+The starter for graphics, back in the '90s,
+
+05:28
+were the first graphics accelerator cards.
+
+05:30
+And then with the advent of programmable GPUs
+
+05:32
+in the 2000s, computational work started shifting over as well.
+
+05:37
+This is the essence of what CUDA is.
+
+05:39
+It's a platform for steering parallel work
+
+05:42
+to the parallel processes and steering serial work
+
+05:45
+to the serial processes, all while
+
+05:47
+keeping your program as a single heterogeneous application,
+
+05:50
+right?
+
+05:51
+It's just about running the right piece of code
+
+05:53
+on the right hardware to run it.
+
+05:55
+This CUDA example I'm showing is very similar to the Python
+
+05:58
+example I showed before.
+
+05:59
+The Python example was invoking NumPy.
+
+06:01
+But here, the CuBLAS library is invoked instead.
+
+06:04
+And it actually does its work on a completely different
+
+06:06
+processor, right?
+
+06:08
+CUDA handles the dispatch of the work and the data
+
+06:11
+to the other processor in back.
+
+06:13
+And we now have a single application
+
+06:14
+running on two different devices, which
+
+06:16
+is why we call it heterogeneous computing.
+
+06:20
+But ultimately, even heterogeneous hardware
+
+06:22
+is limited by the radical limit.
+
+06:24
+And the radical limit limits the transistor count, right,
+
+06:27
+which brings me to the new phase of Moore's
+
+06:29
+law, so-called multi-die scaling or die stacking.
+
+06:34
+It doesn't actually have to be vertical.
+
+06:36
+It's very common today to see horizontal scaling,
+
+06:38
+where multiple dies are placed next to each other
+
+06:40
+on a slab of silicon called an interposer.
+
+06:42
+We're just starting to see chips come out,
+
+06:44
+in the last few years, which are stacked vertically
+
+06:46
+in three dimensions.
+
+06:47
+The most common being HBM, High Bandwidth Memory chips.
+
+06:51
+Multi-die devices are often, though,
+
+06:53
+inherently heterogeneous.
+
+06:54
+You typically combine dies of different types,
+
+06:56
+such as a processor and a, memory into a single package.
+
+07:02
+The inevitable place this is going
+
+07:04
+is to take two separate chips, separate dies
+
+07:06
+and combine them into a single device connected
+
+07:09
+more tightly than ever before and in new ways
+
+07:12
+that allow you to do things which you could never do before
+
+07:14
+with individual discrete processors.
+
+07:17
+So we built one.
+
+07:18
+We call this the Grace/Hopper superchip
+
+07:20
+because it acts as if it's one single heterogeneous device.
+
+07:24
+The secret is the connection between them that bonds them
+
+07:26
+together.
+
+07:27
+We call it the NVLink-C2C, the Chip to Chip NVLink.
+
+07:30
+Let me tell you about how the superchip works
+
+07:32
+and what this can do that nothing else has
+
+07:34
+been able to do before.
+
+07:37
+Here are the functional components
+
+07:38
+which make up the Grace/Hopper superchip.
+
+07:41
+The secret to the whole thing is that piece in the middle
+
+07:43
+labeled NVLink-C2C that I mentioned a moment ago, which
+
+07:47
+it provides half the magic that bonds these two devices
+
+07:49
+together into a single one.
+
+07:51
+The other half of the magic is the system software,
+
+07:53
+once again, a heterogeneous system
+
+07:55
+combining heterogeneous hardware with heterogeneous software.
+
+08:01
+This comes back to the quote that I started with.
+
+08:03
+This next phase of Moore's law requires
+
+08:06
+codesign between software and hardware
+
+08:08
+to really see the benefits.
+
+08:09
+In this case, the superchip truly
+
+08:11
+looks like one single device because both hardware
+
+08:13
+and software were designed together to make it seamless.
+
+08:17
+Let me go into detail for a moment.
+
+08:20
+Here, I've labeled the bandwidth of the interconnects
+
+08:22
+between the components.
+
+08:23
+This is the first part of how these two devices act as one.
+
+08:26
+You can see the NVLink-C2C connection
+
+08:28
+runs at a bidirectional 900 gigabytes per second.
+
+08:30
+That's seven times faster than gen-five PCIe.
+
+08:33
+And because the link bonds the two processors together,
+
+08:36
+this means that the Hopper GPU can directly
+
+08:38
+read from the Grace CPU's memory the full bandwidth
+
+08:42
+that memory chip can provide.
+
+08:44
+There's also half a terabyte per second
+
+08:46
+of bandwidth out by a PCIe to the I/O,
+
+08:48
+such as networking or storage.
+
+08:50
+And then there's the NVLink network as well.
+
+08:54
+I can connect other Grace/Hoppers, as many as 256
+
+08:57
+of them, via the NVLink network, which
+
+08:59
+runs at the same speed of the NVLink-C2C connection.
+
+09:02
+And they can read and write each other's memory.
+
+09:06
+So let's talk about memory and data.
+
+09:08
+Because, in many respects, that's this superchip's
+
+09:11
+superpower, right?
+
+09:13
+First, the Grace can read Hopper's memory.
+
+09:16
+And Hopper can read Grace's memory directly
+
+09:18
+without moving any data.
+
+09:20
+It's truly global thanks to the NVLink-C2C connection.
+
+09:23
+Excuse me.
+
+09:24
+Not only that, but the CPU cache is
+
+09:27
+able to cache both its own memory and the GPU memory
+
+09:30
+by keeping track of GPU cache lines
+
+09:33
+and CPU cache lines.
+
+09:34
+This means memory accesses from either processor are coherent.
+
+09:37
+And the total memory is truly unified.
+
+09:42
+NVLink-C2C implements a protocol called the Address Translation
+
+09:46
+Service, or ATS.
+
+09:47
+This unifies the memory lookup table
+
+09:49
+of what we call the page tables, so
+
+09:51
+that both processes see all the allocations in the system.
+
+09:55
+When Hopper wants to read some data, x, let's say,
+
+09:58
+it's going to be ATS tells it that x is located
+
+10:00
+in the CPU's physical memory.
+
+10:01
+And the GPU will read it over the C2C link directly.
+
+10:04
+There's no need for migration.
+
+10:06
+There's no failure to access the data.
+
+10:07
+It just works.
+
+10:08
+Everything is visible everywhere.
+
+10:11
+I mentioned this earlier, but it's really worth calling out.
+
+10:14
+The Hopper GPU can pull data from the CPU
+
+10:16
+at the full bandwidth that the CPU memory can provide.
+
+10:19
+The NVLink-C2C connection, even when maintaining coherence,
+
+10:23
+is easily able to provide the bandwidth required.
+
+10:27
+But obviously, the GPU can read its own memory
+
+10:29
+at eight times that speed, right,
+
+10:31
+four terabytes per second.
+
+10:32
+So I'd still benefit if the data were local instead
+
+10:35
+of sitting in CPU memory.
+
+10:38
+Part of this heterogeneous system design
+
+10:39
+means the system can detect that the GPU is
+
+10:42
+reading CPU memory a lot.
+
+10:44
+It can then automatically move the data over
+
+10:46
+to the GPU memory, so that reads now
+
+10:48
+get the maximum access speed.
+
+10:50
+If the CPU later starts accessing a lot as well,
+
+10:53
+it can migrate it back.
+
+10:54
+But the system can be intelligent about it
+
+10:55
+because the hardware talks to the software
+
+10:57
+to track who's using what data and how frequently.
+
+11:01
+The great thing about this unified devices
+
+11:03
+that, thanks to ATS, when my data x moves from the CPU
+
+11:07
+over to the GPU, nobody loses track of it.
+
+11:10
+The CPU now is automatically steered
+
+11:12
+to read over the NVLink-C2C and into the GPU.
+
+11:15
+There's one single, coherent copy of data at a time.
+
+11:18
+And the system arranges for it to be
+
+11:20
+in the most efficient place for it to be accessed.
+
+11:22
+This is what I mean by the magic which
+
+11:24
+combines these two very different processes into what's
+
+11:27
+truly a single device.
+
+11:30
+And it really works.
+
+11:31
+The ability to share data so seamlessly
+
+11:33
+and at speeds that many times faster than a PCIe connection
+
+11:37
+is amazing for a whole range of different algorithms.
+
+11:40
+These are results from a bunch of tests
+
+11:42
+run by my friend Vishal.
+
+11:43
+I've linked his talk below.
+
+11:44
+And a key thing here is that these experiments
+
+11:47
+range from CFD simulations on the left-hand side
+
+11:50
+to shared data structures on the right.
+
+11:52
+This really is a broad, general gain
+
+11:54
+across lots of different workloads.
+
+11:56
+I really urge you to go and check out his talk because he
+
+11:58
+goes into a whole pile of detail about the system,
+
+12:00
+about algorithms, about using it that I just
+
+12:02
+don't have time for here.
+
+12:06
+Now, zooming out a little, if you remember,
+
+12:08
+I showed this picture.
+
+12:09
+There's not only the CPU to GPU NVLink-C2C.
+
+12:13
+But there's also an NVLink network,
+
+12:15
+which can connect up to 256 of these devices together.
+
+12:20
+Connecting separate chips together
+
+12:21
+is important because it allows you
+
+12:22
+to multiply the performance of any one chip.
+
+12:25
+It's common to see multiple-chip systems with 4,
+
+12:27
+8, 16, or more devices packed into a node.
+
+12:30
+This picture is an HGX chassis with eight GPUs inside it.
+
+12:33
+And honestly, I only see multi-chip systems growing
+
+12:35
+in density in the future.
+
+12:37
+Die stacking will continue to make single-chip faster.
+
+12:40
+But there's a physical limit actually to how many dies
+
+12:42
+you can stack.
+
+12:44
+As a fun look at the physics, the energy flux
+
+12:46
+from the surface of the sun is 64 megawatts per square meter.
+
+12:50
+And that's the same as just 70 modern radical limited dies
+
+12:54
+stacked together, right?
+
+12:55
+If we double the number of dies every two years,
+
+12:57
+as per Moore's law, that's slightly
+
+12:59
+over 12 years of Moore's law scaling
+
+13:02
+before a chip gets hotter than the sun.
+
+13:06
+But there's a place this goes inevitably, I think,
+
+13:08
+which is multi-node systems.
+
+13:10
+In many respects, we're already there.
+
+13:12
+The world is building giant data centers literally every day
+
+13:15
+because there's an exponentially growing amount of data
+
+13:17
+to process.
+
+13:18
+And the laws of physics say that, as I hit my power
+
+13:21
+limit on a multi-die device and then on a multi-chip node,
+
+13:23
+my only option is to connect lots and lots of nodes
+
+13:26
+together.
+
+13:29
+So when I really look into my crystal ball,
+
+13:31
+I see no future that's not multi-node.
+
+13:34
+Multi-die makes every chip more capable.
+
+13:36
+But ultimately, power and scaling requirements
+
+13:38
+lead us to here, which means, because remember hardware
+
+13:42
+and software must now be co-designed to be successful,
+
+13:44
+that we need to think about how we're going to program
+
+13:46
+and use these multi-node machines, which brings me
+
+13:51
+to CUDA, finally after 14 minutes of talk.
+
+13:56
+Let me tell you about CUDA for a minute.
+
+13:58
+Typically, when someone says CUDA,
+
+14:00
+they're thinking of the CUDA C++ language,
+
+14:02
+which is the language we create, I create.
+
+14:05
+And it's based on standard C++.
+
+14:06
+It's a language for writing heterogeneous programs which
+
+14:10
+target and run on the GPU.
+
+14:14
+And we do that, right?
+
+14:15
+But CUDA is not just that.
+
+14:16
+You can write native GPU programs in other languages
+
+14:18
+as well, CUDA Fortran and OpenCL, for example.
+
+14:22
+And now as well as programming the GPU
+
+14:24
+in native power-level languages, many of the standard languages
+
+14:28
+have or are getting parallel constructs.
+
+14:31
+And the CUDA ecosystem has compilers
+
+14:32
+which support those as well.
+
+14:34
+So for instance, you can write a parallel program using C++ 17
+
+14:37
+standard parallel constructs.
+
+14:39
+And it combines and runs the parallel parts on the GPU
+
+14:42
+automatically.
+
+14:45
+And it's not only the languages which are
+
+14:47
+supported by NVIDIA directly.
+
+14:48
+There are literally dozens of other languages
+
+14:50
+which are created by other companies and groups, which
+
+14:52
+also compile onto and run on the GPU.
+
+14:54
+This is really important to us.
+
+14:56
+Because whatever language your application is written in,
+
+14:58
+we spend our lives making it as easy as possible
+
+15:01
+for you to GPU accelerate it.
+
+15:04
+And so when we built CUDA, we built
+
+15:05
+it to be a platform that other things could be built on,
+
+15:08
+right?
+
+15:09
+This is really important.
+
+15:10
+And by this, I mean we created layers,
+
+15:13
+so that different languages could
+
+15:14
+target the GPU in whatever way worked best for them.
+
+15:17
+You can write GPU programs through high level languages.
+
+15:19
+You can create your own language with a compiler targeting
+
+15:22
+LLBMIR or even directly generate assembly code
+
+15:25
+in CUDA's assembly language, PTX.
+
+15:28
+CUDA is languages.
+
+15:30
+But it's also things to make more languages, which
+
+15:35
+brings me to the whole other dimension of CUDA, right?
+
+15:37
+These layers of languages built upon a compiler stack
+
+15:40
+go upwards as well.
+
+15:42
+Most people don't write any direct code
+
+15:44
+to target the GPU at all.
+
+15:45
+In fact, if you never write a line of CUDA C++,
+
+15:48
+I'm succeeding.
+
+15:49
+And I say that as one of the architects of CUDA, right?
+
+15:51
+People so often access GPU acceleration
+
+15:54
+through libraries or through even high level aspects
+
+15:57
+of the ecosystem like frameworks and SDKs.
+
+15:59
+CUDA is built of layers of abstraction.
+
+16:04
+And that's really the secret to CUDA.
+
+16:05
+It's not one thing.
+
+16:07
+It's a whole array of things that all work together.
+
+16:10
+And it's in multiple dimensions.
+
+16:12
+You choose the abstraction that's
+
+16:13
+most convenient for you in the language that
+
+16:15
+works the best for you, that makes
+
+16:17
+it as easy and productive as possible
+
+16:19
+for you to get your work onto the GPU.
+
+16:24
+And the thing that makes this all CUDA is that everything
+
+16:27
+is tied together, so that a handwritten kernel, say,
+
+16:31
+in CUDA Fortran will understand memory and tasks
+
+16:34
+launched from a Python framework,
+
+16:36
+if that's what you want to do.
+
+16:37
+This interoperability is what allows this huge ecosystem
+
+16:40
+of things to coexist, so that you don't have to write
+
+16:43
+a single line of code more than is necessary,
+
+16:45
+not even a line of CUDA C++ if I'm doing my job right.
+
+16:49
+I've never plugged one of my own talk before.
+
+16:52
+But I actually have a talk about this very thing at GTC.
+
+16:55
+So I've linked it for you at the bottom in case
+
+16:58
+you want to go and have a look.
+
+17:01
+So anyway, remember we were talking
+
+17:03
+about multi-node systems.
+
+17:05
+Well, this is yet another dimension
+
+17:08
+with a spectrum of choices and for exactly the same reason.
+
+17:11
+Different applications have different needs.
+
+17:14
+So my third dimension is scale and how
+
+17:18
+I go about getting my program to scale
+
+17:20
+across several or even lots of many nodes.
+
+17:24
+There's no one answer how to program these systems.
+
+17:26
+There has to be a spectrum of options
+
+17:28
+because no single approach will work for everything.
+
+17:33
+Once again, just like for which abstraction you target,
+
+17:35
+you intersect where it makes the most
+
+17:37
+sense for your application.
+
+17:39
+For example, on one side of the spectrum,
+
+17:41
+we have cuNumeric, which scales to multi-node completely
+
+17:44
+invisibly to the program.
+
+17:46
+You write a normal NumPy program.
+
+17:47
+And everything just scales under the covers.
+
+17:49
+I'll show you.
+
+17:49
+I'll tell you more about this in a minute.
+
+17:52
+On the other side, you have fully explicit parallelism.
+
+17:55
+Within NVSHMEM, you get to control
+
+17:57
+where each and every byte of your data goes
+
+17:59
+and when it goes, right?
+
+18:01
+And then there's everything in between.
+
+18:03
+And having all of these options is really important.
+
+18:05
+For example, if you've already got an HPC program using MPI,
+
+18:08
+MPI is a message passing programming model widely used
+
+18:11
+in supercomputing, then you can't and shouldn't rewrite it.
+
+18:14
+You intersect at CUDA or MPI.
+
+18:16
+You use the best tool for the job.
+
+18:19
+Now, here's how I think about the spectrum.
+
+18:21
+This isn't in any textbook.
+
+18:22
+It's just my own categorization based
+
+18:24
+on how I think about paralyzing a problem.
+
+18:27
+But in some cases, I have code that does not and cannot know
+
+18:30
+how big or small of a system it's running on.
+
+18:32
+So the system just has to handle it for me.
+
+18:35
+That's implicit parallelism.
+
+18:38
+In other cases, I know I'm running on a multi-node system.
+
+18:41
+But I don't need or want a handcrafted, distributed
+
+18:44
+algorithm.
+
+18:45
+I can explicitly call into scalable libraries
+
+18:47
+which handle all the data distribution for me.
+
+18:49
+Or I can mark up my code and let the compiler
+
+18:51
+and runtime handle it.
+
+18:52
+That's managed parallelism.
+
+18:53
+Distribution is managed for me.
+
+18:57
+But then there are other cases where
+
+18:59
+I need to manage exactly what's going on.
+
+19:01
+Maybe it's part of the underlying algorithm.
+
+19:03
+Or maybe I just want to tune to that last 99.9% of efficiency.
+
+19:07
+Or maybe I'm inheriting a code that's
+
+19:08
+already written that way.
+
+19:09
+I need this whole spectrum to cover all the bases.
+
+19:13
+It's really important to note, by the way,
+
+19:14
+that we don't have the whole story yet.
+
+19:16
+Nobody does, right?
+
+19:17
+This is where we need to be going, right?
+
+19:20
+It's where we're investing.
+
+19:21
+It's what I think must happen because of the laws of physics.
+
+19:25
+And one of the most exciting things happening right now
+
+19:27
+is actually the thing on the left, implicit parallelism.
+
+19:33
+Implicit parallelism is the ability
+
+19:34
+to have an application be distributed
+
+19:37
+across any number of devices without the distribution being
+
+19:39
+coded in natively as part of the application.
+
+19:43
+That means the same piece of code
+
+19:44
+can be distributed on anything from 1
+
+19:46
+to 10,000 or more machines, right?
+
+19:49
+Now, obviously, if you only have a tiny bit of m you're not
+
+19:52
+going to make full use of a 10,000-node supercomputer.
+
+19:54
+The point isn't that this is some magic parallelization
+
+19:56
+scheme.
+
+19:57
+Instead, it's a mechanism where a single piece of source code
+
+20:00
+can be created, which is agnostic to parallelism.
+
+20:05
+So let me tell you about how this happens.
+
+20:07
+So the sequential API, which the application calls,
+
+20:10
+and more on that in a moment,
+
+20:11
+directs itself through 2 runtime layers,
+
+20:14
+which, together, we call Legate.
+
+20:18
+The first layer helps map sequential API
+
+20:20
+to the Legate model of tasks and dependencies.
+
+20:24
+By mapping to the task model, it allows
+
+20:26
+the common runtime system layer to distribute the work
+
+20:30
+optimally around the set of execution nodes being used.
+
+20:35
+Within each node, a task can call down
+
+20:37
+into a local accelerated library to operate
+
+20:39
+on a single-node scale.
+
+20:41
+Legate is a distribution system, not a calculation system.
+
+20:44
+It relies on the same accelerated library
+
+20:46
+that your application would be calling
+
+20:48
+when running on a single GPU.
+
+20:49
+But through Legate, the runtime of the application
+
+20:52
+can span many GPUs without any source code changes.
+
+20:55
+It looks single GPU to your source code.
+
+20:59
+Now, obviously, this doesn't happen by magic.
+
+21:02
+The idea of the Legate framework is that,
+
+21:04
+if a library or, in fact, any Legate application,
+
+21:06
+you can program directly to Legate,
+
+21:08
+formulates its workflow as a series of parallel tasks
+
+21:11
+with dependencies between them, then the Legate runtime
+
+21:14
+will optimally manage the distribution of work
+
+21:17
+across however many devices are being used.
+
+21:22
+Tasks in Legate exchange data via one or more stores.
+
+21:25
+Legate stores we call them, which
+
+21:27
+is basically a multidimensional array, right?
+
+21:29
+Tasks can map different portions of the store array.
+
+21:32
+And the mapping combined with the intertask dependencies
+
+21:35
+gives the Legate runtime enough information
+
+21:37
+to both move data around the system
+
+21:38
+and to synchronize between tasks to ensure
+
+21:40
+the data is where it needs to be when it needs to be there.
+
+21:45
+So let me introduce you to cuNumeric.
+
+21:48
+What we've done is we've created a Legate library that
+
+21:50
+implements NumPy.
+
+21:52
+Now, remember that applications simply
+
+21:54
+talk to a serial interface.
+
+21:56
+All the parallelization is done inside the runtime.
+
+21:59
+So you write normal NumPy code, like
+
+22:01
+this simple stencil benchmark example on the left.
+
+22:05
+Inside the library, cuNumeric breaks the operations
+
+22:08
+in each NumPy API down into tasks
+
+22:10
+Legate style, which are passed down into Legate,
+
+22:13
+so they can be distributed around a multi-node system.
+
+22:18
+It really works.
+
+22:19
+This is a trivial example.
+
+22:20
+So trivial so that I could set it on a slide,
+
+22:22
+fit it on a slide.
+
+22:23
+But the scaling, all the way up to 1,000 GPUs,
+
+22:26
+happens without a single line of code being changed.
+
+22:28
+This is literally serial NumPy code, which is now
+
+22:31
+running across a huge system.
+
+22:33
+And this is just a trivial toy example, right?
+
+22:36
+So my colleague Wonchan, who is
+
+22:37
+one of the architects of this amazing work,
+
+22:39
+has a whole talk on Legate and cuNumeric with examples
+
+22:42
+of things like CFD solvers running under this framework.
+
+22:45
+I've linked his talk below.
+
+22:46
+And it's amazing.
+
+22:47
+See it, right?
+
+22:48
+This is the future.
+
+22:52
+So let's take a step to the right
+
+22:54
+along my scanning spectrum and talk about the next level over,
+
+22:57
+managed parallelism.
+
+22:59
+If you recall, this is when I know I'm
+
+23:01
+running on a multi-node system.
+
+23:02
+But instead of having to handcraft a distributed
+
+23:04
+algorithm, I call into scalable libraries or programming
+
+23:07
+models, which handle all the multi-node stuff for me.
+
+23:12
+CUDA platform has a host of accelerated math libraries
+
+23:15
+for different application domains.
+
+23:17
+This is not a complete list of CUDA libraries.
+
+23:19
+It's just the ones I had icons handy for.
+
+23:20
+But I wanted to talk about the NP libraries
+
+23:22
+for a moment, the multi-node libraries, cuSOLVERMp
+
+23:26
+and cuFFTMp here on the right.
+
+23:29
+CuSOLVER is a GPU implementation of LAPACK,
+
+23:32
+well, LAPACK-like matrix-solving algorithms.
+
+23:34
+And the multi-node version of cuSOLVERMp
+
+23:38
+distributes the work over a large number of GPUs.
+
+23:40
+On this chart, we go up to 32 by 32,
+
+23:43
+which is 1,024 GPUs of scale on the right-hand side
+
+23:46
+of this chart.
+
+23:47
+Now, this is a weak scaling chart.
+
+23:49
+So you're looking for a line that's straight and not curved.
+
+23:52
+When it curves, then you've lost efficiency.
+
+23:54
+And you can't scale any further.
+
+23:55
+A straight line shows scaling is efficient.
+
+23:57
+So this is literally scaling for free.
+
+24:00
+You just call the function.
+
+24:01
+And the library carefully manages
+
+24:02
+the underlying breakdown of computation and communication.
+
+24:05
+And here, I'm comparing cuSOLVERMp
+
+24:07
+against the wellknown ELPA library executing
+
+24:09
+the same function.
+
+24:14
+Now, this time, we're looking at the multi-node Fourier
+
+24:16
+transform library called cuFFTMp.
+
+24:19
+The last graph was weak scaling.
+
+24:20
+Here, we're looking at a strong scaling graph
+
+24:22
+instead, which means lower values are better.
+
+24:24
+Strong scaling is when I take a problem of a fixed size,
+
+24:27
+and I divide it across more and more GPUs.
+
+24:30
+In principle, each time I double the number of GPUs,
+
+24:32
+it should take half as long, right?
+
+24:33
+So we expect the performance to follow something
+
+24:36
+like this 1/N yellow curve here, taking less time as you
+
+24:39
+add more processing power.
+
+24:43
+What we've done here is to take the well known JAX
+
+24:46
+machine-learning framework, which contains its own work
+
+24:48
+distribution mechanism, and we've
+
+24:50
+dropped in the cuFFTMp multi-node library.
+
+24:53
+The original JAX FFT is in gray.
+
+24:55
+While the cuFFT one is in dark green.
+
+24:57
+And for comparison, I've included a standalone FFT
+
+25:00
+in bright green.
+
+25:01
+And you can see that there's some tax for operating
+
+25:03
+within the JAX framework.
+
+25:04
+But the scaling is still right along that line.
+
+25:06
+And performance is still really good.
+
+25:11
+Now I'm going to look a bit more deeply
+
+25:13
+into Hopper for a moment.
+
+25:14
+Because it was Hopper, in many ways,
+
+25:15
+highlights the heterogeneous architecture story
+
+25:17
+I was telling at the beginning.
+
+25:20
+Just Hopper, not just Grace/Hopper, but Hopper
+
+25:22
+alone does.
+
+25:23
+This is a comparison of multi-node FFT
+
+25:26
+between previous generation A100 and the current generation
+
+25:31
+H100.
+
+25:32
+It's a really interesting result,
+
+25:34
+not just because H100 is faster.
+
+25:36
+You'd expect the newer architecture
+
+25:37
+to be faster than the old one.
+
+25:38
+But by how much?
+
+25:40
+CuFFT does not use the tensor cores,
+
+25:42
+which means the speedup comes pretty
+
+25:45
+much from internal architectural features,
+
+25:46
+like more FP32 CUDA cores, a larger shared memory.
+
+25:49
+And for this multi-GPU application,
+
+25:52
+the new NVLink network.
+
+25:53
+The Moore's law process should have given us 50% more.
+
+25:57
+But we're looking consistently at 70% or even 100% more
+
+26:00
+performance, right?
+
+26:01
+And that can only have come from micro architectural changes,
+
+26:03
+heterogeneous hardware working in concert
+
+26:06
+with these parallel software algorithms.
+
+26:10
+And in fact, it is even more pronounced
+
+26:12
+when we come to the tensor cores.
+
+26:13
+Maybe the single best known piece
+
+26:15
+of heterogeneous hardware in the GPU is the tensor cores.
+
+26:18
+This chart compares Volta, Ampere, and Hopper
+
+26:20
+architectures.
+
+26:21
+And the obvious thing that jumps out
+
+26:23
+is the huge leap from Ampere to Hopper.
+
+26:26
+FFT was pushing double performance.
+
+26:29
+Matrix multiplication with tensor cores
+
+26:31
+is more than triple.
+
+26:32
+Again, you'd expect 50% from Moore's law.
+
+26:34
+And there's another 20% more SMs on Hopper.
+
+26:36
+So without the custom tensor core hardware,
+
+26:38
+we'd be looking at a peak of around 2x, right?
+
+26:42
+So all is not lost when Moore's law comes to an end.
+
+26:44
+But it does point at increasingly exotic
+
+26:47
+heterogeneous hardware as one place to find performance.
+
+26:53
+So speaking of exotic hardware, the obvious thing
+
+26:55
+missing from that previous chart was eight-bit floating point.
+
+26:58
+And FP8's a really interesting beast.
+
+27:03
+The H100 GPU was the first GPU to implement it.
+
+27:05
+The range for any value is very small,
+
+27:08
+which means you need to scale each matrix
+
+27:10
+to lie within the valid range.
+
+27:13
+This is a diagram of the workflow around the FP8 matrix
+
+27:16
+multiplication.
+
+27:17
+The point is not to follow all the little pieces
+
+27:19
+on this diagram.
+
+27:20
+But you can see that cuBLAS, as a whole,
+
+27:22
+does a lot more than just invoke the tensor core, which
+
+27:25
+is that green box on the left, which brings me back,
+
+27:29
+again, to this new phase of Moore's law world, right.
+
+27:31
+Where to really advance the state of the art,
+
+27:33
+you're not just building a custom piece of FP8 hardware.
+
+27:36
+But you're building a heterogeneous system
+
+27:38
+where everything has to work together.
+
+27:40
+To get something like eight-bit floating point
+
+27:42
+precision to work requires designing hardware
+
+27:44
+for an algorithm and designing the algorithm
+
+27:46
+around the hardware, right?
+
+27:48
+Everything is now a software and chip problem, not just
+
+27:50
+a chip problem.
+
+27:53
+And because of this, all that complexity
+
+27:55
+does not stop FP8 from being a huge step up in performance
+
+27:58
+from 16-bit precision, right?
+
+28:00
+The combination of moving half the data
+
+28:02
+and computing on half the bits leads to around a factor of two
+
+28:05
+speed up, even with all the scaling management.
+
+28:08
+My colleague Harun goes into detail
+
+28:10
+on all the math libraries, not just multi-node and FP8,
+
+28:12
+but a whole ton of other stuff besides.
+
+28:14
+I've linked to his talk at the bottom here.
+
+28:16
+And you should definitely go and check it out.
+
+28:19
+Looking back to our CUDA platform stack,
+
+28:21
+accelerated libraries fall into two broad categories.
+
+28:24
+Again, this is part of the idea that you
+
+28:26
+can intersect with CUDA at whatever level
+
+28:27
+makes the most sense for you in your application, right?
+
+28:30
+If you want to bring heterogeneous GPU
+
+28:31
+execution into your CPU code, we have Host callable libraries.
+
+28:36
+But if you're a bit lower level, you're
+
+28:38
+writing your own kernels, we have device libraries,
+
+28:40
+which do the FFTs or tensor core operations directly
+
+28:42
+within your code without you having to write anything,
+
+28:46
+right?
+
+28:47
+There's a link at the bottom here
+
+28:48
+where you can download them and get more information.
+
+28:50
+But since we're on the topic of tensor cores,
+
+28:52
+I want to talk about one particular device library
+
+28:54
+for a moment called CUTLASS.
+
+28:58
+CUTLASS is our C++ linear algebra programming model.
+
+29:01
+And it's the way you call tensor cores directly
+
+29:04
+from within your own kernels.
+
+29:06
+CUTLASS 3.0 was released in January.
+
+29:08
+And it brings in not only support
+
+29:10
+for Hopper's super fast tensor cores,
+
+29:11
+but it significantly streamlines the API to give you a new way
+
+29:15
+to define shapes and tiles for your operations.
+
+29:19
+This new version is based on something
+
+29:20
+called CuTe, which is the,
+
+29:22
+C-U-T-E, which is the new engine powering CUTLASS 3.0.
+
+29:25
+CuTe brings in the idea of layouts,
+
+29:28
+which you see on the right here, both for execution
+
+29:30
+and for data.
+
+29:31
+And it dramatically simplifies the way
+
+29:33
+you define how matrices are shaped and traversed.
+
+29:35
+For example, the simple concept of the layout
+
+29:38
+allows you to condense all these fixed definitions on the left
+
+29:40
+into something much easier and more flexible.
+
+29:45
+In addition to this new programming model furnished
+
+29:47
+by CuTe, CUTLASS 3 has pushed really hard to create a better
+
+29:50
+developer and user experience.
+
+29:53
+First, introduces a new simplified and powerful
+
+29:55
+high level API for declaring gems that automatically selects
+
+29:59
+many kernel parameters for you.
+
+30:01
+But it also makes it easy to opt in
+
+30:03
+to specific features, such as selecting
+
+30:05
+the number of pipeline stages to use, like in this example.
+
+30:08
+So you can stay hands off and just say auto.
+
+30:10
+Or you can go as deep as you want.
+
+30:11
+You can control Hopper-specific features,
+
+30:13
+such as the shape of the thread block cluster
+
+30:15
+and whether TMA and persistent scheduling are used.
+
+30:19
+Second, CUTLASS 3.1 will introduce
+
+30:21
+an experimental release of a new high level Python
+
+30:23
+interface that makes it easy to declare, emit, and compile
+
+30:26
+CUTLASS kernels directly from Python.
+
+30:29
+In addition, this Python interface
+
+30:30
+aims to make it simpler to automatically port CUTLASS
+
+30:32
+kernels to deep learning frameworks,
+
+30:34
+such as generating a CUDA Python extension from the kernel.
+
+30:37
+There's a whole talk on CUTLASS 3, how it works for Hopper
+
+30:41
+and what's coming in Python at the talk I've
+
+30:43
+linked at the bottom here.
+
+30:44
+If you want to learn how to program tensor cores in CUDA,
+
+30:47
+that is the talk for you.
+
+30:51
+Now, speaking of development, a key part of any ecosystem,
+
+30:55
+but especially a parallel to large scale one,
+
+30:58
+is developer tools.
+
+31:00
+Whenever I'm teaching CUDA, the first thing I say
+
+31:03
+is, learn the tools, right?
+
+31:04
+It'll take you a day to learn them.
+
+31:06
+And they will save you a year of time easily, right?
+
+31:09
+There are the obvious debuggers and profilers.
+
+31:11
+But there's so much more as well,
+
+31:13
+sampling tools to track network traffic,
+
+31:16
+tools to monitor workloads in real time, tools which
+
+31:18
+guide you on where to spend your time
+
+31:20
+and not to spend your time tuning your kernels.
+
+31:23
+Seriously, learn the tools.
+
+31:24
+Whether you're writing CUDA C++ or standing up a data center,
+
+31:28
+these will give you the insights you cannot get any other way.
+
+31:34
+Speaking of data centers, multi-node
+
+31:36
+has been my focus today.
+
+31:37
+And if tools are a key part of any ecosystem,
+
+31:40
+that's especially true of massive multi-node systems.
+
+31:44
+You need developer tools for a single H100 GPU
+
+31:46
+because it can run 270,000 threads at once, right?
+
+31:50
+You just can't look at that much information.
+
+31:51
+So you've got to have tools to aggregate it.
+
+31:53
+Now multiply that by 10,000 for a data center.
+
+31:56
+And what do you do, right?
+
+31:57
+You need tools for your tool.
+
+31:59
+And that's what Nsight, which is
+
+32:00
+the tool platform for the CUDA ecosystem is called Nsight.
+
+32:03
+That's what Nsight is building.
+
+32:07
+Nsight is already able to capture information from a task
+
+32:10
+and record it to disk for later analysis.
+
+32:13
+Starting in the latest version of Nsight systems,
+
+32:16
+they've broadened the analysis to take all of these records
+
+32:18
+from each node of a multi-node system
+
+32:20
+and do what amounts to a giant meta analysis on them all.
+
+32:24
+It's not as simple as just throwing more timelines
+
+32:26
+into the profile, all right?
+
+32:27
+In the same way you can't just look at 200,000 threads,
+
+32:30
+you can't look at what's going on in 10,000 nodes at once
+
+32:32
+in a whole system.
+
+32:33
+The analysis, the visualization, the data interrogation
+
+32:37
+has to be reinvented for this kind of scale.
+
+32:41
+So what we've done is to create this concept
+
+32:43
+of recipes, which are a form of active filter and query system.
+
+32:46
+And we've created a runtime around them,
+
+32:48
+which can post-process data from a multi-node run.
+
+32:51
+We provide a bunch of recipes for you
+
+32:53
+like listed on the right here.
+
+32:54
+But you can write your own as well, of course.
+
+32:56
+The recipe runtime itself can be run as a distributed system.
+
+32:59
+Because it's really helpful to be
+
+33:01
+able to process parallel output in parallel, right?
+
+33:03
+If you've got 10,000 nodes producing data,
+
+33:06
+you'll probably want more than one node to process it.
+
+33:09
+When your job finishes, you can even
+
+33:11
+include an analysis step before you release the node, right?
+
+33:13
+It's however you want to schedule it.
+
+33:15
+It's data on disk.
+
+33:16
+And you run the runtime applying to the data
+
+33:18
+at any time that suits you.
+
+33:21
+Once the recipe runtime has done its job,
+
+33:23
+it outputs the results to a database.
+
+33:24
+Nsight itself provides a bunch of new visualization tools
+
+33:28
+to interrogate that output, much like the profiler or debugger
+
+33:32
+aggregates and displays the activity of thousands
+
+33:34
+of threads for a single GPU today.
+
+33:36
+Nsight can also feed the output into a Jupyter Notebook,
+
+33:39
+so that it can be used and queried in Jupyter Lab,
+
+33:42
+which with all the flexibility that brings with it as well.
+
+33:47
+Here's just one example.
+
+33:48
+This is a heat map visualization of kernel runtime and SM
+
+33:52
+activity across just 16 GPUs running together in this case.
+
+33:56
+You can see that most of the kernels
+
+33:58
+take either 20 to 30 seconds or 40 to 45 seconds.
+
+34:01
+In fact, there's two waves, right?
+
+34:02
+You can also see that some of the GPUs
+
+34:04
+are active in between those times, though,
+
+34:07
+obviously, using something other than their SMs.
+
+34:09
+This is just one visualization of 16 GPUs.
+
+34:12
+Excuse me.
+
+34:12
+My colleague Daniel Horowitz has a talk
+
+34:15
+going deep into exactly how all this works.
+
+34:17
+And he's got some examples of visualizing as many as 512 GPUs
+
+34:21
+at once.
+
+34:21
+Definitely check it out.
+
+34:25
+Which kind of brings me full circle
+
+34:27
+to where the next phase of Moore's law
+
+34:29
+is inevitably leading us, to data center scale computing.
+
+34:32
+Although, to be honest, we're already there, right?
+
+34:35
+The world passed 8,000 data centers in 2022.
+
+34:39
+Three more are currently being turned on every day.
+
+34:42
+And the growth rate is exponential.
+
+34:43
+So that number is going up fast.
+
+34:45
+And this means that most of the world's data
+
+34:48
+is now kept far away from whoever owns it.
+
+34:50
+And data is, arguably, now the most valuable commodity
+
+34:53
+in the world.
+
+34:57
+This brings up aspects of security that are new.
+
+34:59
+We're all familiar with encrypting data
+
+35:01
+to prevent it from being stolen or compromised,
+
+35:03
+both on disk and across the network, right?
+
+35:05
+You're probably watching this on the web, streaming
+
+35:07
+over an HTTPS encrypted connection, a secure link.
+
+35:15
+When your data isn't in a machine
+
+35:17
+that you control access to, you suddenly
+
+35:20
+have to think about something new.
+
+35:22
+When you load your encrypted data off disk,
+
+35:24
+you decrypt it, so that you can process it.
+
+35:26
+That data could be extremely sensitive,
+
+35:28
+financial data or a patient's medical data or critical IP
+
+35:31
+that your company has created.
+
+35:33
+It's now unencrypted in the memory of a computer
+
+35:35
+far away on a machine someone else controls.
+
+35:39
+This is what's called a zero-trust situation,
+
+35:41
+where you cannot take the chance that the machine processing
+
+35:43
+your data won't itself be compromised.
+
+35:48
+So to address this, the world came up
+
+35:49
+with confidential computing.
+
+35:51
+Confidential computing eliminates the remaining data
+
+35:54
+security vulnerability by protecting data
+
+35:56
+while it's in use.
+
+35:57
+It's an idea that's exploding at the rate
+
+35:59
+that data-center computing is exploding.
+
+36:01
+Because as more of our data is out of our control,
+
+36:04
+we need these zero-trust trust protections.
+
+36:09
+So while confidential computing mechanisms currently
+
+36:11
+exist for data on a CPU that's in use, what we've done
+
+36:14
+is to extend the boundary of trust
+
+36:16
+to include the GPU as well as the CPU.
+
+36:19
+The problem is depicted on the left here.
+
+36:21
+Typically, in a data center, an application
+
+36:23
+runs in a virtual machine that is controlled by the system
+
+36:26
+hypervisor.
+
+36:27
+The hypervisor is like an operating system
+
+36:29
+that runs operating systems.
+
+36:30
+And it can see and touch everything
+
+36:31
+that goes on underneath it, including GPU memory.
+
+36:34
+So if someone ca compromises the hypervisor,
+
+36:37
+the whole system is wide open.
+
+36:41
+For this reason, computers, today,
+
+36:42
+have a hardware mechanism called a root
+
+36:44
+of trust, which puts even the hypervisor
+
+36:46
+in an encrypted mode.
+
+36:47
+So the system can't be compromised.
+
+36:49
+This creates what's called a trusted execution environment,
+
+36:52
+or a TEE, around the VM where you know that all your software is
+
+36:56
+secure and encrypted, everything that runs,
+
+36:58
+all the data, the execution, everything.
+
+37:00
+All right, so what we've done is to extend this trusted
+
+37:03
+execution environment to include an H100 GPU's execution
+
+37:06
+core and its memory.
+
+37:08
+So the whole CPU-GPU heterogeneous system
+
+37:11
+is now secure even from the hypervisor.
+
+37:15
+Now, there's a lot of fascinating detail
+
+37:17
+about how all this works.
+
+37:18
+And I will refer you to my friend, Phil Roger's talk, linked
+
+37:20
+here at the bottom, for a superb description of what's happening
+
+37:23
+and how.
+
+37:24
+The most important thing to know,
+
+37:26
+though, is that this is completely
+
+37:28
+invisible to an application.
+
+37:29
+You boot up the system.
+
+37:30
+Everything is wrapped in this trusted execution environment.
+
+37:33
+And all your applications still work.
+
+37:35
+The TEE can encompass even multiple H100 GPUs and even
+
+37:39
+the NVLink between them.
+
+37:41
+In fact, the one thing that's not secure
+
+37:43
+is the PCIe bus itself.
+
+37:44
+And so all data transferred between CPU and GPU
+
+37:47
+is encrypted.
+
+37:48
+So let me show you how that works.
+
+37:53
+Let's look at how this plays out for a typical CUDA application.
+
+37:56
+And again, the really important point
+
+37:58
+here is that CUDA applications run unmodified
+
+38:01
+on a confidential system.
+
+38:03
+Our engineering team put a ton of work
+
+38:05
+into making it invisible, so that you
+
+38:06
+don't have to make changes to applications
+
+38:08
+if when you want to enable confidential computing.
+
+38:11
+So what I've got here is a typical CUDA program sequence,
+
+38:14
+which allocates some data, sets it up, copies it to the GPU,
+
+38:18
+does some computing on it, and then copies the result back,
+
+38:21
+right?
+
+38:21
+I've broken into steps one to five.
+
+38:24
+And we'll walk through and see what happens.
+
+38:27
+Excuse me.
+
+38:29
+I'll compile a little table on the side
+
+38:30
+here, so that we can compare normal
+
+38:32
+with confidential execution.
+
+38:34
+And let's step through the program in normal mode
+
+38:36
+to begin with.
+
+38:38
+So first, I allocate some memory on the GPU.
+
+38:42
+Then I allocate pin system memory on the CPU
+
+38:44
+and initialize it.
+
+38:45
+Now, CUDA developers, who are watching this,
+
+38:47
+will know that pin system memory is
+
+38:49
+a special type of memory allocation
+
+38:51
+that you do through CUDA.
+
+38:52
+And because it's pinned, it speeds up data transfers
+
+38:55
+by a factor of five or six.
+
+38:57
+It also, because it's pinned, allows
+
+38:58
+the GPU to access CPU memory directly, right?
+
+39:02
+So you should always use this kind of allocation
+
+39:04
+if the memory is going to be used
+
+39:06
+to move data to and from the GPU because it's much faster.
+
+39:10
+Now I'll kick off the copy.
+
+39:11
+The GPU spins up the DM engine to blast
+
+39:14
+the data across the PCI bus from the CPU to the GPU.
+
+39:18
+In the fourth step, I launch a kernel on the GPU
+
+39:20
+to process the data and produce a result, also on the GPU.
+
+39:24
+And finally, I copy the result back to the CPU
+
+39:26
+for whatever happened next.
+
+39:28
+So this is a completely typical sequence
+
+39:31
+where you've offloaded a parallel computation
+
+39:33
+with its data to and from the GPU.
+
+39:37
+OK, so now let's look at this in a confidential computing
+
+39:40
+context, where we've set up our confidential VM to hold
+
+39:43
+the session on the CPU, just like we were talking about
+
+39:45
+before.
+
+39:47
+Now, if you remember, excuse me again.
+
+39:49
+If you remember, we've set up the trusted execution
+
+39:51
+environment to include the GPU and all its memory,
+
+39:54
+as well as the CPU.
+
+39:55
+But very importantly, the PCI bus
+
+39:57
+is outside the T, which means that any traffic we send
+
+40:00
+over the PCIe has to be encrypted in order
+
+40:03
+to keep it confidential.
+
+40:04
+So let me show you how that works.
+
+40:07
+First, we allocate GPU memory as normal.
+
+40:09
+Nothing special here.
+
+40:10
+Same as before.
+
+40:13
+Next, we allocate pin system memory same way on the CPU.
+
+40:17
+Except, this time, the confidential computing system
+
+40:20
+under the covers is going to step in and manage this memory
+
+40:23
+in order to keep it secure.
+
+40:25
+This needs to happen because the GPU can read from and write
+
+40:28
+to the system memory directly while it's in CPU memory.
+
+40:32
+And that would cross the untrusted PCI bus
+
+40:35
+if access were not managed correctly.
+
+40:39
+Now we do the data copy from host to device.
+
+40:41
+This crossed the PCIe bus.
+
+40:43
+So we automatically encrypt the data before sending
+
+40:45
+and decrypt it on arrival, right?
+
+40:47
+For asynchronous data movement, which is typically the case,
+
+40:50
+this happens in the background.
+
+40:51
+So the overhead is amortized as data and batch sizes increase.
+
+40:54
+So larger batch sizes see less encryption cost,
+
+40:57
+which matches workloads like deep learning, training,
+
+40:59
+and large model inference pretty well.
+
+41:03
+When we launch a kernel onto the GPU, even the launch operation
+
+41:06
+itself needs to be encrypted.
+
+41:08
+That's because kernel parameters could leak data.
+
+41:10
+And even the kernel itself that you're launching
+
+41:11
+should not be visible, right?
+
+41:13
+The whole launch mechanism is encrypted for confidentiality.
+
+41:18
+Finally, we copy the result back.
+
+41:20
+Notice I have the same five steps with CC
+
+41:23
+on after CC off in the table in the left.
+
+41:25
+I didn't change a single line of source code.
+
+41:28
+But under the covers, everything was maintained
+
+41:30
+encrypted and confidential.
+
+41:31
+The whole point of the system is that the program
+
+41:34
+runs unmodified with security applied at the system
+
+41:36
+and runtime level.
+
+41:38
+My colleague Rob Nertney has a whole talk
+
+41:40
+which goes into detailing exactly what's going on
+
+41:42
+and how it works and all the details, right?
+
+41:44
+Confidential computing is an amazing piece of engineering.
+
+41:47
+And I really recommend having a watch.
+
+41:48
+I have a link to it at the bottom here.
+
+41:52
+So that's it.
+
+41:53
+We've gone from Moore's law to heterogeneity,
+
+41:56
+Grace/Hopper, the multi-node future,
+
+41:58
+and all the dozens of ways in which the CUDA platform is
+
+42:01
+growing to encompass it.
+
+42:03
+And as always, all I can ever really do in this talk
+
+42:06
+is to let you know something exists and then point you
+
+42:09
+at the real experts who are giving
+
+42:10
+in-depth talks about these things at GTC this week.
+
+42:14
+I've gathered here all the references
+
+42:16
+that I've pointed you to during the talk.
+
+42:18
+And you can find this slide at the end of the PDF.
+
+42:21
+And the PDF of the talk will be posted on the session portal
+
+42:24
+shortly as well.
+
+42:25
+And I want to thank you all so much for spending the time
+
+42:27
+and listening.
+
+42:28
+And enjoy the rest of your GTC.
+
