@@ -33,8 +33,8 @@ TODO：熟悉各种kernel的实现及优化方式。
 
 ### CUDA
 
+- GPU分支预测的原理：GPU会将不同分支路径分配给多个ALU同时执行（如将`if-else`的两个分支分发给不同线程），最终仅保留有效路径的结果，丢弃无效路径的计算
 - 专注于Tensor Core、大模型写的不好的不对的地方；
-
 - BlockSize大小设置（算密集型的核函数，推荐使用 128 - 512 个线程 / 块  内存密集型的核函数，可考虑使用 256 - 1024 个线程 / 块）：
 
   - 一定是32的倍数、共享内存、寄存器大小有限、设备最大限制；
@@ -103,7 +103,7 @@ TODO：熟悉各种kernel的实现及优化方式。
   |                                      |                                                 |                              |                                              |                                                              |
   |                                      |                                                 |                              |                                              |                                                              |
   |                                      |                                                 |                              |                                              |                                                              |
-  
+
 - WMMA（Volta）、MMA（Ampere）、WGMMA（Hopper：直接从共享内存加载矩阵操作数、TMA）
 
   - mma 的缺点就是上述抽象全部没有，warp 内每个线程输入、输出、寄存器，都要自己配对，相对应的 SMEM load/store 可以自己写算法规避 bank conflict。
@@ -144,6 +144,10 @@ TODO：熟悉各种kernel的实现及优化方式。
 
 - 全库召回调用cutlass GEMM的代码：
 
+- **`barrier`** 使用的是一种称为 “barrier resources” 的硬件资源（例如专门的同步计数器或原子机制），这种资源数量有限 [NVIDIA Developer Forums](https://forums.developer.nvidia.com/t/differences-and-compatibility-between-mbarrier-and-barrier-in-ptx/314443?utm_source=chatgpt.com)[Stack Overflow](https://stackoverflow.com/questions/53662484/cuda-how-to-use-barrier-sync?utm_source=chatgpt.com)。不能分离“到达 arrive”与“等待 wait”两步操作。
+
+  **`mbarrier`** 则在 **共享内存（shared memory）** 中维护其状态，因此不依赖有限的硬件资源 [NVIDIA Developer Forums](https://forums.developer.nvidia.com/t/differences-and-compatibility-between-mbarrier-and-barrier-in-ptx/314443?utm_source=chatgpt.com)[reviews.llvm.org](https://reviews.llvm.org/D154090?utm_source=chatgpt.com)。
+
 - 时钟周期
 
   |            操作            |                  延迟（Latency）                   |                      吞吐（Throughput）                      |
@@ -169,29 +173,142 @@ TODO：熟悉各种kernel的实现及优化方式。
   - FP16 : TensorCore 10-20%；
   - Triton调度策略：10-20%
 - libtorch做了哪些优化？
-
 - Torch.compile
-
 - 融合过哪些算子？（去TRT里面找）
-
 - DeepGEMM迁移Ada架构
+- Zero
+
+![企业微信截图_f715778e-e18a-407c-ba52-395f88ed2fc4](file:///Users/m/Library/Containers/com.tencent.WeWorkMac/Data/Documents/Profiles/3675B093401F95C2759D981FC093A0ED/Caches/Images/2025-07/43bdfe899adc0d3ba3229c2575bb6cd4_HD/%E4%BC%81%E4%B8%9A%E5%BE%AE%E4%BF%A1%E6%88%AA%E5%9B%BE_f715778e-e18a-407c-ba52-395f88ed2fc4.png?lastModify=1753413830)
+
+- **DeepGemm**:  
+  - **Promotion / 两级累加技术**: 
+    - **第一级（Tensor Core 计算）**: FP8×FP8→FP16/BF16
+    - **第二级（CUDA Core 累加）**: 通过 CUDA Core 的 `FFMA`（Fused Multiply-Add）指令将 FP16/BF16 部分和累加到 FP32 寄存器中。
+- **余弦相似度流水线**：
+  - 性能分析需要关注的指标：缓存命中率；各级带宽；bank冲突；算力；
+  - tiling策略：
+    - m16n64k128（n>>m）: A（16x128x2B） B（128x64x2B）
+    - N拆分到不同的warp上
+    - cp.async: 32个线程一次总共读4x128x2B，for循环可以读很多行
+  - perfetch: 
+    - 从全局内存加载首个分块数据到共享内存
+    - 从共享内存加载到寄存器
+    - 计算小矩阵A的欧几德里范数，结果存在寄存器里面
+    - A矩阵也可以直接存在寄存器里面，全部都放的下；
+  - for 循环（对大矩阵不同grid分块后的循环）：
+    - 从全局内存取下一个分块到共享内存（异步）
+    - for循环（K维度[128]*M[64]维度的分块）：
+      - 从共享内存加载B的K下一分块到寄存器
+      - 计算当前分块(m16n8k16)，K维度的reduce在寄存器上完成（B常驻在寄存器中）
+      - 计算当前大分块的平方和
+      - 计算B矩阵的欧几德里范数
+    - 计算最终结果
+    - 结果写回全局内存
+    - wait 下一个分块完成
+
+**自我介绍**：
+
+毕业之后加入阿里巴巴，负责模型部署系统的开发，(之后组织架构调整)之后阿里巴巴组建之江实验室，与燧原合作，开发燧原芯片的软件栈，24年从杭州换工作地点到上海加入小红书，负责算子开发和相关的优化工作，包括华为、燧原计算卡的部署上线，GPU/CPU计算相关的优化，取得了比较显著的性能收益，并在小红书工作期间发表两篇论文。
 
 
 
+### Attention
 
-量化的数据格式？ 底数 指数 以及表示的范围
+$$
+Q &= X W^Q \quad &\text{(Query)} \\
+K &= X W^K \quad &\text{(Key)} \\
+V &= X W^V \quad &\text{(Value)} \\
+$$
 
-溢出问题如何排查？
+$$
+\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V
+$$
 
-Zero策略的阶段和图片
 
-Megatron、DeepSpeed的特性
+
+- Shape:
+
+  输入矩阵 `X`：形状为 `(n,d_model)`，其中 `n`是输入序列的token数量，`d_model`是模型的隐藏层维度
+
+  `W^Q`、`W^K`、`W^V`的形状均为 `(d_model, d_k)`（多头，`d_k = d_v = d_model / num_heads`）
+
+  每个头的输出形状为 `(n,d_k)`，拼接后为 `(n,h⋅dk) = (n,dmodel)`，再通过 `W^O`（形状` (d_model,d_model)`）线性变换回原维度 `(n,d_model)`
+
+|       **步骤**       |          **Q/K/V Shape**          |         **说明**         |
+| :------------------: | :-------------------------------: | :----------------------: |
+|       输入`X`        |    `(batch_size, n, d_model)`     |       初始输入序列       |
+|  线性变换后`Q K V`   |    `(batch_size, n, d_model)`     |     独立的Q/K/V投影      |
+|  多头拆分后`Q K V`   | `(batch_size, num_heads, n, d_k)` |   拆分为多个头并行计算   |
+|  注意力分数（QK^T）  |  `(batch_size, num_heads, n, n)`  | 点积与缩放后的相似度矩阵 |
+| 加权输出（Attn × V） | `(batch_size, num_heads, n, d_k)` |  每个头的注意力加权结果  |
+|    拼接与最终输出    |    `(batch_size, n, d_model)`     |  恢复原始维度并线性变换  |
+|       FFN输出        |    `(batch_size, n, d_model)`     |                          |
+
+- FA优化点：
+  - **FlashAttention-1**
+    - **分块计算（Tiling）**：将Q、K、V矩阵划分为小块（Tile），在GPU的SRAM中局部计算注意力分数，避免存储完整的N×N注意力矩阵，显存占用从O(N²)降至O(N)
+    - **算子融合（Kernel Fusion）**：将Softmax、Masking、Dropout等操作融合到单个CUDA核函数中，减少显存读写次数
+    - **反向传播重计算（Recomputation）**：前向传播时不保存中间矩阵（如QKᵀ），反向传播时重新计算，牺牲计算时间换取显存节省
+  - **FlashAttention-2**
+    - **减少非矩阵乘法操作**：延迟Softmax的分母计算，减少除法次数，提升Tensor Core利用率
+    - **循环顺序调整**：将外层循环改为Q，内层循环为KV，减少共享内存访问冲突，提升并行度
+    - **细粒度并行化**：在序列长度维度并行化，支持更长的序列（如8K-32K），H100 GPU的FP16计算利用率达73%
+    - **因果掩码优化**：跳过无效块（如上三角区域），加速自回归生成任务
+  - **FlashAttention-3**
+    - **异步流水线**：利用Hopper GPU的Tensor Memory Accelerator（TMA）和Warp专业化，分离GEMM与Softmax到不同Warp，实现计算与内存访问重叠
+    - **低精度支持（FP8）**：采用FP8（e4m3格式）计算，结合块量化技术（QuIP），FP8计算速度达1.2 PFLOPs/s，误差降低60%
+  
+- FlashAttention 中的 Softmax: 
+
+  - **计算当前块的局部统计量**：
+
+    - `m_local = max(x_i)`// 当前块内的最大值
+    - `f_local = exp(x_i - m_local)`// 当前块的指数值（减去局部最大值以保持数值稳定）
+    - `l_local = sum(f_local)`// 当前块的指数和
+
+  - **迭代更新全局统计量**:
+
+    - **新的全局最大值**：`m_global_new = max(old_m_global, m_local)`
+
+    - **新的全局指数和**：`l_global_new = exp(old_m_global - m_global_new) * old_l_global + exp(m_local - m_global_new) * l_local`
+
+      *这里的 `old_m_global`和 `old_l_global`是处理之前所有块后累积的全局最大值和指数和。通过乘以一个修正因子（`exp(old_m_global - m_global_new)`和 `exp(m_local - m_global_new)`），将之前基于旧最大值的计算结果“校正”到新的全局最大值尺度上。*
+
+    - **更新输出**
+      - 对于当前块：`softmax_current_block = f_local * exp(m_local - m_global_new) / l_global_new`
+      - 对于之前已经计算过的块：它们的输出也会在全局最大值更新后被重新缩放。FlashAttention 通过持续更新一个输出块（O_i）来避免存储中间结果。
+
+- KVCache优化:
+
+  - 缓存压缩与量化技术
+    - **KV张量压缩**：通过降低KV向量的维度或精度来减少存储需求。MLA模型提出仅保存压缩后的潜在向量和共享键向量，大幅削减每token的缓存参数数量。
+    - **低精度量化**：将KV Cache从FP16降至INT8或INT4
+    - **分层存储**：构建GPU显存与CPU内存的二级缓存体系
+  - 动态内存管理策略
+    - **PagedAttention机制**: 将KV Cache分割为固定大小的Page（通常1MB-4MB），通过页表管理逻辑连续而物理分散的内存块。这种方法支持按需分配、灵活处理变长序列，并实现零拷贝的KV缓存共享
+
+- KV Cache 如何保证精度：
+  - **动态与非均匀量化策略**：
+    - **动态范围调整**：根据输入数据的实际分布动态调整量化参数（如缩放因子和零点），避免静态量化因固定范围导致的精度损失。
+    - **非均匀量化（NUQ）**： 针对KV Cache中数值分布的非均匀特性（如离群值），采用非均匀量化网格（如k-means聚类生成的量化点）来更精确地匹配数据分布
+  - **混合精度与关键部分保护**：
+    - **分层/分头差异化量化**：对模型中不同层或注意力头分配不同的量化精度。
+    - **注意力关键token保护**：模型对某些token（如首token或标点符号）的KV Cache误差更敏感。
+
+https://zhuanlan.zhihu.com/p/11886909512
+
+### WGMMA
+
+- 异步
+- 大矩阵
+- 从共享内存读取
+- 多个warp协作
 
 ### CUTLASS
 
 - 优化方法：
 
-  - **hreadBlock-Warp-Thread三级分块**: BlockTile（线程块级）、WarpTile（warp级）和ThreadTile（线程级）
+  - **ThreadBlock-Warp-Thread三级分块**: BlockTile（线程块级）、WarpTile（warp级）和ThreadTile（线程级）
 
   - **指令级并行（MMA指令）**: `mma.sync`或`wgmma`指令直接调用Tensor Core
 
@@ -222,15 +339,34 @@ Megatron、DeepSpeed的特性
 
   - **swizzle减少Bank冲突**: shared memory 的列偏移可以由**行偏移的若干位**与 **Global Memory 中的列偏移** 异或得到
 
+    ```
+    T array[][NX]给定共享内存中的数组，我们定义NX × sizeof(T) == SWIZZLE_SIZE。允许的值为SWIZZLE_SIZE大于或等于 32 的 2 的幂，例如 32、64、128、256、…… 等。
+    
+    [y][x]给定中的索引T array[][NX]，我们可以按如下方式计算混合索引x_swz：
+    
+    TC计算 -byte 段内 -byte 块的索引SWIZZLE_SIZE：
+    i_chunk = (y × NX + x) × sizeof(T) / sizeof(TC)
+    y_chunk = i / (SWIZZLE_SIZE / sizeof(TC))
+    x_chunk = i % (SWIZZLE_SIZE / sizeof(TC))
+    
+    TC使用XOR 运算计算字节块的混合索引：
+    x_chunk_swz = y_chunk ^ x_chunk
+    
+    计算混合索引：
+    x_swz = x_chunk_swz × sizeof(TC) / sizeof(T) % NX + x % (sizeof(TC) / sizeof(T))
+    ```
+    
     八个块是一个最小的线程组内的八个块，一个块内，存 8 个 16位个数，四个 32位的bank。8个一组的组内不会有bank冲突，组间会有冲突。
-
+  
   ![img](https://pic2.zhimg.com/v2-52ad0b8c4bf9ed091da002f68eba3795_1440w.jpg)
   
   - **融合算子**: 融合后处理
   - **动态集群调度**： 自动选择最优计算单元
-  - 
 
+### 编译器优化
 
+- 编译器后端优化策略：Reorder(交换)、Split(拆分)、Fuse(融合)、Tile(平铺)、Vector(向量化)、展开(Unrolling)、并行(Paralle lizing)
+  TVM 中的Reorder(交换)、Split(拆分)、Fuse(融合)、Tile(平铺)、Vector(向量化)、展开(Unrolling)、绑定(bindin g)
 
 ### TODO
 
@@ -320,3 +456,163 @@ https://blog.chinaaet.com/justlxy/p/5100053251
 
 https://blog.chinaaet.com/justlxy/p/5100053328
 PTX优化建议：https://developer.nvidia.com/blog/advanced-nvidia-cuda-kernel-optimization-techniques-handwritten-ptx/
+
+CUDA博客：https://mp.weixin.qq.com/mp/appmsgalbum?__biz=Mzk2NDA4NjU0Nw==&action=getalbum&album_id=3922953336307122177&from_itemidx=1&from_msgid=2247487257&#wechat_redirect
+
+AXI:
+
+-  https://developer.arm.com/documentation/102202/0300/AXI-protocol-overview
+- https://adaptivesupport.amd.com/s/article/1053914?language=en_US
+- https://verificationprotocols.blogspot.com/2017/03/axi-protocol.html
+- https://blog.csdn.net/weixin_33691817/article/details/93521692
+
+Outstanding：
+
+- https://www.intel.com/content/www/us/en/docs/programmable/788295/23-3/maximum-number-of-outstanding-transactions.html
+- https://developer.arm.com/documentation/102202/0300/Transfer-behavior-and-transaction-ordering
+- https://docs.amd.com/r/en-US/am011-versal-acap-trm/
+- https://docs.amd.com/r/en-US/am011-versal-acap-trm/Outstanding-Transactions
+- https://docs.amd.com/r/en-US/pg313-network-on-chip/Latency
+
+问题：
+
+- *如果K维度是24, 如何解决bank 冲突？ 取余？
+
+- GEMM/FA的优化方法
+
+- L2 缓存优化（除了更窄的tilling）还有什么优化策略？
+
+- PTX barrier 以及其他同步方式的异同？
+
+- *.ca .cg缓存策略的使用？
+
+- 指令并行
+
+- swizzle 不是 2次幂如何处理？
+
+- *伪相关 / bypass(旁路) / *IPC / scheduler
+
+  perfill decode阶段需要关注的点有什么？
+
+
+  量化的数据格式？ 底数 指数 以及表示的范围
+
+  溢出问题如何排查？
+
+  Zero策略的阶段和图片
+
+  Megatron、DeepSpeed的特性
+
+  *A100 x3 buffer性能最好，原因除了内存带宽大还有什么？减少阻塞 等待
+
+  *cp.async 支持加载的数据数量（4B 8B 16B）？为什么会有这些？内存对齐/单次加载多个数据
+
+  *cp.async 对应的等待指令
+
+  = ldmatrix 为什么支持转置？ 与直接使用ld.shared有什么区别？主要原因是转置
+
+  = 矩阵乘的内积或是外积，mma只支持row.col这种的计算
+
+  *warp stall
+
+  *理论占用率怎么算？
+
+  *每个线程使用的寄存器限制：硬件-512 编译器限制-256
+
+  *模板元编程
+
+  ?模板修改成员变量
+
+  *可变模板参数
+
+  *enableif
+
+  *多重引用、引用折叠: T&& &&`→ `T&&
+
+  *lambda表达式的原理 如何修改成员变量？使用mutable修改
+
+  *volatile 在C++上的意义？有没有防止指令重排的功能？没有\同一volatile变量操作不会移除、合并或重新排序，其他的不报证
+
+  *mutable
+
+  ?ldmatrix转置的目的
+
+  *mma 是否支持转置: 只支持row.col
+
+  *cp.async的填充
+
+  *cp.async 的wait 等待的数量？
+
+  *__threadfence() : 同一网格 (grid)、  非阻塞、仅强制完成内存操作的可见性；
+
+  *__syncthreads() ：仅同步同一线程块的线程
+
+  *__threadfence_block(): 对同一块内线程的可见性
+
+  *__threadfence_system(): 扩展可见性到主机
+
+  *bitfield
+  *make_shared() 计数在一起
+
+  *智能指针三种
+
+  *完美转发/std::forward
+
+  *wmma指令与mma指令的差别？bank 冲突
+
+  *list vector map 异同
+
+  *编译流程
+
+  *stream用法，多stream是否需要等待默认stream: 要等待
+
+  *cudaMalloc 同步、异步：同步
+
+  *统一地址空间
+
+  *循环展开的性能优缺点：两点
+
+  *MMIO
+
+  *IPC
+
+  *内存布局
+
+  *指令乱序是在哪个阶段实现的？发射（Issue） 执行（Execute）
+
+  *XLA 在GPU上是如何做的JIT? 正常做
+
+  GEMM对于不同形状的矩阵如何优化？
+
+  block 的fp8量化
+
+  阿里巴巴 爱橙面试题：
+
+  Per block 量化
+
+  FP8 量化、 FP8 Per block、int8量化的区别
+
+  Per block 
+
+分部分的softmax
+
+**HLO到PTX的过程**
+
+- **转换到 `LMHLO Dialect`**： **`LMHLO`** 是 **Late MHLO** 的缩写，可以理解为**具有内存缓冲区的 HLO**
+
+- **转换到 `GPU Dialect`**: 用于表示 **GPU 通用操作** 的抽象，如 `gpu.launch`（启动 GPU 内核）、`gpu.memcpy`（内存拷贝）、`gpu.shuffle`（线程束内数据交换）
+
+- **转换到 `LLVMIR Dialect`**：**`LLVMIR Dialect`** 允许在 MLIR 中**直接表示 LLVM 的指令和类型**
+
+- **生成 PTX 代码**：MLIR 就可以利用 **LLVM进一步优化并编译生成 PTX 代码**
+
+  - **从 LLVMIR Dialect 到标准 LLVM IR**
+  - **LLVM 优化与代码生成** -> **NVPTX**
+  - **NVPTX 后端生成 PTX**
+
+  
+
+
+
+
+
